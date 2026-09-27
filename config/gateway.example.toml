@@ -1,0 +1,25 @@
+# inference-gateway domain config.
+#
+# Process settings (listen addresses, TLS, timeouts, log format) are flags or
+# IG_* env vars, not keys here. Run `inference-gateway --help` for the list.
+
+# Clients reach an upstream at /{name}/..., e.g.
+#   ANTHROPIC_BASE_URL=http://localhost:8080/anthropic
+#   OPENAI_BASE_URL=http://localhost:8080/openai/v1
+# Client API keys pass through unchanged; the gateway holds none.
+
+[[upstreams]]
+name = "anthropic"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+
+[[upstreams]]
+name = "openai"
+provider = "openai"            # also for vLLM, Ollama, OpenRouter, ...
+base_url = "https://api.openai.com"
+
+[ingress]
+# Client networks allowed to use the proxy; empty allows all.
+allow_cidrs = []
+# Require `x-gateway-token` to equal the IG_GATEWAY_TOKEN env var.
+require_token = false
