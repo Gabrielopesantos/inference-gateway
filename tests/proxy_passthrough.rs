@@ -37,7 +37,9 @@ async fn assert_passthrough_identical(provider: &str, path: &str, script: Script
     )
     .await;
     let http = client();
-    let req_body = r#"{"model":"m","stream":true,"messages":[]}"#;
+    // Already has `include_usage`, so the openai adapter leaves it unchanged.
+    let req_body =
+        r#"{"model":"m","stream":true,"stream_options":{"include_usage":true},"messages":[]}"#;
 
     let direct = http
         .post(format!("{}{path}", mock.base_url()))
@@ -86,7 +88,7 @@ async fn json_response_keeps_content_length() {
 async fn upstream_error_status_passes_through() {
     let body = br#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#;
     let mut script = Script::json(StatusCode::TOO_MANY_REQUESTS, body);
-    script.headers.push(("retry-after", "7".into()));
+    script.headers.push(("retry-after".into(), "7".into()));
     let mock = MockUpstream::start(script).await;
     let gw = spawn_gateway(
         &config(&[("anthropic", "anthropic", &mock.base_url())], ""),
@@ -382,8 +384,9 @@ async fn admin_endpoints() {
     let resp = http.get(gw.admin_url("/healthz")).send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(resp.text().await.unwrap(), "ok");
+    // Served only with [prometheus].
     let resp = http.get(gw.admin_url("/metrics")).send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

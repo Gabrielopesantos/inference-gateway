@@ -4,7 +4,7 @@
 pub mod cli;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use ipnet::IpNet;
@@ -20,6 +20,8 @@ pub struct FileConfig {
     pub upstreams: Vec<UpstreamFile>,
     #[serde(default)]
     pub ingress: IngressFile,
+    pub cost: Option<CostFile>,
+    pub prometheus: Option<PrometheusFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +30,7 @@ pub struct UpstreamFile {
     pub name: String,
     pub provider: ProviderKind,
     pub base_url: String,
+    pub inject_stream_usage: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -39,10 +42,24 @@ pub struct IngressFile {
     pub require_token: bool,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CostFile {
+    pub pricing_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrometheusFile {}
+
+/// Module sections stay ungated here, so a section for a disabled feature
+/// still parses and `modules::build` can name the missing feature.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub upstreams: Vec<Upstream>,
     pub ingress: Ingress,
+    pub cost: Option<CostFile>,
+    pub prometheus: Option<PrometheusFile>,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +67,7 @@ pub struct Upstream {
     pub name: String,
     pub provider: ProviderKind,
     pub base_url: Url,
+    pub inject_stream_usage: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -65,7 +83,13 @@ impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("reading config {}", path.display()))?;
-        Self::parse(&text).with_context(|| format!("config {}", path.display()))
+        let mut config =
+            Self::parse(&text).with_context(|| format!("config {}", path.display()))?;
+        // Relative paths in the file are relative to the file.
+        if let (Some(cost), Some(dir)) = (&mut config.cost, path.parent()) {
+            cost.pricing_file = dir.join(&cost.pricing_file);
+        }
+        Ok(config)
     }
 
     /// # Errors
@@ -96,10 +120,14 @@ impl TryFrom<FileConfig> for Config {
                 }
                 let base_url = parse_base_url(&u.base_url)
                     .with_context(|| format!("upstream {name:?}: base_url"))?;
+                if u.inject_stream_usage.is_some() && u.provider != ProviderKind::Openai {
+                    bail!("upstream {name:?}: inject_stream_usage applies only to provider openai");
+                }
                 Ok(Upstream {
                     name,
                     provider: u.provider,
                     base_url,
+                    inject_stream_usage: u.inject_stream_usage.unwrap_or(true),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -120,6 +148,8 @@ impl TryFrom<FileConfig> for Config {
                 allow_cidrs,
                 require_token: file.ingress.require_token,
             },
+            cost: file.cost,
+            prometheus: file.prometheus,
         })
     }
 }
@@ -267,6 +297,49 @@ base_url = "https://api.openai.com"
             ));
             assert!(e.contains("name"), "{bad:?}: {e}");
         }
+    }
+
+    #[test]
+    fn inject_stream_usage_defaults_on_and_is_openai_only() {
+        let cfg = Config::parse(EXAMPLE).unwrap();
+        assert!(cfg.upstreams[1].inject_stream_usage);
+        let e = err(r#"
+[[upstreams]]
+name = "a"
+provider = "anthropic"
+base_url = "https://x"
+inject_stream_usage = false
+"#);
+        assert!(e.contains("only to provider openai"), "{e}");
+    }
+
+    #[test]
+    fn module_sections_are_optional() {
+        let cfg = Config::parse(EXAMPLE).unwrap();
+        assert!(cfg.cost.is_some());
+        assert!(cfg.prometheus.is_some());
+        let cfg = Config::parse(
+            "[[upstreams]]\nname = \"a\"\nprovider = \"openai\"\nbase_url = \"https://x\"\n",
+        )
+        .unwrap();
+        assert!(cfg.cost.is_none());
+        assert!(cfg.prometheus.is_none());
+    }
+
+    #[test]
+    fn pricing_file_is_relative_to_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gw.toml");
+        std::fs::write(
+            &path,
+            "[[upstreams]]\nname = \"a\"\nprovider = \"openai\"\nbase_url = \"https://x\"\n\n[cost]\npricing_file = \"pricing.toml\"\n",
+        )
+        .unwrap();
+        let cfg = Config::load(&path).unwrap();
+        assert_eq!(
+            cfg.cost.unwrap().pricing_file,
+            dir.path().join("pricing.toml")
+        );
     }
 
     #[test]

@@ -6,7 +6,8 @@ use axum::http::StatusCode;
 use clap::Parser;
 use inference_gateway::config::Config;
 use inference_gateway::config::cli::{Cli, Command};
-use inference_gateway::gateway::Gateway;
+use inference_gateway::gateway::{Gateway, Secrets};
+use inference_gateway::modules::{BuildCtx, Dispatcher};
 
 use support::mock_upstream::{MockUpstream, Script};
 use support::{client, config, spawn_gateway};
@@ -72,8 +73,8 @@ async fn token_is_required_and_never_forwarded() {
     assert!(!mock.last_request().headers.contains_key("x-gateway-token"));
 }
 
-#[test]
-fn require_token_without_env_fails_at_startup() {
+#[tokio::test]
+async fn require_token_without_env_fails_at_startup() {
     let cfg = Config::parse(&config(
         &[("anthropic", "anthropic", "https://api.anthropic.com")],
         "[ingress]\nrequire_token = true\n",
@@ -83,8 +84,13 @@ fn require_token_without_env_fails_at_startup() {
         .unwrap()
         .into_command()
         .unwrap();
+    let dispatcher = Dispatcher::start(Vec::new(), &BuildCtx::default(), 1);
     for token in [None, Some(String::new())] {
-        let err = Gateway::build(cfg.clone(), &args, token).unwrap_err();
+        let secrets = Secrets {
+            gateway_token: token,
+            identity_secret: None,
+        };
+        let err = Gateway::build(cfg.clone(), &args, secrets, &dispatcher).unwrap_err();
         assert!(err.to_string().contains("IG_GATEWAY_TOKEN"), "{err}");
     }
 }

@@ -21,7 +21,7 @@ use tokio::time::Instant;
 #[derive(Clone, Debug)]
 pub struct Script {
     pub status: StatusCode,
-    pub headers: Vec<(&'static str, String)>,
+    pub headers: Vec<(String, String)>,
     /// `(delay before this chunk, chunk)`.
     pub chunks: Vec<(Duration, Bytes)>,
     /// Delay before the status line and headers are sent.
@@ -39,10 +39,13 @@ impl Script {
         Self {
             status: StatusCode::OK,
             headers: vec![
-                ("content-type", "text/event-stream; charset=utf-8".into()),
-                ("cache-control", "no-cache".into()),
-                ("request-id", "req_mock_1".into()),
-                ("anthropic-ratelimit-requests-remaining", "49".into()),
+                (
+                    "content-type".into(),
+                    "text/event-stream; charset=utf-8".into(),
+                ),
+                ("cache-control".into(), "no-cache".into()),
+                ("request-id".into(), "req_mock_1".into()),
+                ("anthropic-ratelimit-requests-remaining".into(), "49".into()),
             ],
             chunks,
             header_delay: Duration::ZERO,
@@ -54,8 +57,8 @@ impl Script {
         Self {
             status,
             headers: vec![
-                ("content-type", "application/json".into()),
-                ("content-length", body.len().to_string()),
+                ("content-type".into(), "application/json".into()),
+                ("content-length".into(), body.len().to_string()),
             ],
             chunks: vec![(Duration::ZERO, Bytes::copy_from_slice(body))],
             header_delay: Duration::ZERO,
@@ -66,13 +69,26 @@ impl Script {
     pub fn chunks(chunks: Vec<(Duration, &'static str)>) -> Self {
         Self {
             status: StatusCode::OK,
-            headers: vec![("content-type", "text/event-stream".into())],
+            headers: vec![("content-type".into(), "text/event-stream".into())],
             chunks: chunks
                 .into_iter()
                 .map(|(d, c)| (d, Bytes::from_static(c.as_bytes())))
                 .collect(),
             header_delay: Duration::ZERO,
         }
+    }
+
+    /// Replace headers with a `*.headers` fixture (status line skipped).
+    #[must_use]
+    pub fn with_fixture_headers(mut self, raw: &str) -> Self {
+        self.headers = raw
+            .lines()
+            .skip(1)
+            .filter_map(|l| l.split_once(':'))
+            .map(|(k, v)| (k.trim().to_owned(), v.trim().to_owned()))
+            .filter(|(k, _)| k != "content-length")
+            .collect();
+        self
     }
 
     pub fn body(&self) -> Vec<u8> {
@@ -221,7 +237,7 @@ async fn handle(State(shared): State<Arc<Shared>>, req: Request) -> Response {
 
     let mut resp = Response::builder().status(script.status);
     for (name, value) in &script.headers {
-        resp = resp.header(*name, value);
+        resp = resp.header(name, value);
     }
     resp.body(Body::from_stream(body)).unwrap()
 }

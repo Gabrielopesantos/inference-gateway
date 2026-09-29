@@ -3,7 +3,10 @@
 pub mod config;
 pub mod error;
 pub mod gateway;
+pub mod identity;
 pub mod ingress;
+pub mod modules;
+pub mod observe;
 pub mod providers;
 pub mod proxy;
 pub mod redact;

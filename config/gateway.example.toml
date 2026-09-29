@@ -17,9 +17,22 @@ base_url = "https://api.anthropic.com"
 name = "openai"
 provider = "openai"            # also for vLLM, Ollama, OpenRouter, ...
 base_url = "https://api.openai.com"
+# Add stream_options.include_usage to streaming requests so usage is observed.
+# Clients then also receive the final usage chunk (empty `choices`).
+inject_stream_usage = true
 
 [ingress]
 # Client networks allowed to use the proxy; empty allows all.
 allow_cidrs = []
 # Require `x-gateway-token` to equal the IG_GATEWAY_TOKEN env var.
 require_token = false
+
+# Modules: a present section enables the module. A section for a module whose
+# cargo feature is off is a startup error.
+
+# Sets cost_usd per request. Relative paths are relative to this file.
+[cost]
+pricing_file = "pricing.toml"
+
+# Serves metrics on the admin listener at /metrics.
+[prometheus]

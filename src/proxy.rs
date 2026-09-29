@@ -11,15 +11,19 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::header::{self, HeaderMap, HeaderName, HeaderValue};
+use axum::http::request::Parts;
 use axum::response::Response;
 use bytes::Bytes;
-use futures_util::{Stream, TryStreamExt};
+use futures_util::TryStreamExt;
 use http_body_util::{BodyExt, LengthLimitError, Limited};
+use tokio::time::Instant;
 use tracing::{debug, warn};
 use url::Url;
 
 use crate::error::GatewayError;
-use crate::gateway::Gateway;
+use crate::gateway::{Gateway, Route};
+use crate::identity::Principal;
+use crate::observe::Observation;
 use crate::redact;
 
 /// Prefix of gateway-only request headers; never forwarded.
@@ -45,17 +49,66 @@ pub async fn forward(
     State(gw): State<Arc<Gateway>>,
     req: Request,
 ) -> Result<Response, GatewayError> {
+    let start = Instant::now();
     let (parts, body) = req.into_parts();
-    let (name, rest) = split_path(parts.uri.path());
-    let upstream = gw
-        .upstream(name)
+    let (name, upstream_path) = split_path(parts.uri.path());
+    let route = gw
+        .route(name)
         .ok_or_else(|| GatewayError::UnknownUpstream(name.to_owned()))?;
+    let mut obs = Observation::new(
+        &route.upstream.name,
+        route.adapter.clone(),
+        gw.sink.clone(),
+        start,
+    );
+    obs.target(&parts.method, upstream_path);
+    obs.principal(Principal::from_headers(
+        &parts.headers,
+        route.adapter.api_key(&parts.headers),
+        gw.identity.as_ref(),
+    ));
+
+    let upstream_resp = match send(&gw, route, parts, body, &mut obs).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            obs.fail(&e);
+            return Err(e);
+        }
+    };
+
+    obs.response(upstream_resp.status(), upstream_resp.headers());
+    let mut out = Response::new(Body::empty());
+    *out.status_mut() = upstream_resp.status();
+    *out.headers_mut() = downstream_headers(upstream_resp.headers());
+    let upstream_name = route.upstream.name.clone();
+    let stream = upstream_resp.bytes_stream().inspect_err(move |e| {
+        warn!(upstream = %upstream_name, error = %error_chain(e), "upstream body failed mid-stream");
+    });
+    *out.body_mut() = Body::from_stream(obs.into_body(stream));
+    Ok(out)
+}
+
+async fn send(
+    gw: &Gateway,
+    route: &Route,
+    parts: Parts,
+    body: Body,
+    obs: &mut Observation,
+) -> Result<reqwest::Response, GatewayError> {
+    let upstream = &route.upstream;
+    let (_, rest) = split_path(parts.uri.path());
     let url = upstream_url(&upstream.base_url, rest, parts.uri.query())?;
 
     if content_length(&parts.headers).is_some_and(|len| len > gw.max_body) {
         return Err(GatewayError::BodyTooLarge { limit: gw.max_body });
     }
-    let body = read_body(body, gw.max_body).await?;
+    let mut body = read_body(body, gw.max_body).await?;
+
+    if let Some(op) = route.adapter.classify(&parts.method, rest) {
+        let info = route.adapter.inspect_request(op, &body);
+        body = route.adapter.rewrite_request(&info, body);
+        obs.request(op, info);
+    }
 
     let headers = upstream_headers(&parts.headers);
     debug!(
@@ -67,8 +120,7 @@ pub async fn forward(
         "forwarding request"
     );
 
-    let upstream_resp = gw
-        .client
+    gw.client
         .request(parts.method, url)
         .headers(headers)
         .body(body)
@@ -82,24 +134,7 @@ pub async fn forward(
             } else {
                 GatewayError::UpstreamUnreachable(error_chain(&e))
             }
-        })?;
-
-    let mut out = Response::new(Body::empty());
-    *out.status_mut() = upstream_resp.status();
-    *out.headers_mut() = downstream_headers(upstream_resp.headers());
-    let upstream_name = upstream.name.clone();
-    *out.body_mut() = response_body(upstream_resp.bytes_stream().inspect_err(move |e| {
-        warn!(upstream = %upstream_name, error = %error_chain(e), "upstream body failed mid-stream");
-    }));
-    Ok(out)
-}
-
-/// Phase 2 hook for observing the stream.
-fn response_body<S>(stream: S) -> Body
-where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-{
-    Body::from_stream(stream)
+        })
 }
 
 /// `rest` keeps its leading `/` and percent-encoding; empty for `/{upstream}`.
