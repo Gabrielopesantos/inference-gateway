@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl-Cache","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"role":"assistant","content":"","refusal":null},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-Cache","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{"content":"Gateway forwards and observes."},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"id":"chatcmpl-Cache","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[{"index":0,"delta":{},"logprobs":null,"finish_reason":"stop"}],"usage":null}
+
+data: {"id":"chatcmpl-Cache","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","service_tier":"default","system_fingerprint":null,"choices":[],"usage":{"prompt_tokens":7040,"completion_tokens":80,"total_tokens":7120,"prompt_tokens_details":{"cached_tokens":6912,"audio_tokens":0},"completion_tokens_details":{"reasoning_tokens":64,"audio_tokens":0,"accepted_prediction_tokens":0,"rejected_prediction_tokens":0}}}
+
+data: [DONE]
+

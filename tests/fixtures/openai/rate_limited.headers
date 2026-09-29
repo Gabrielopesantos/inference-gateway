@@ -1,0 +1,11 @@
+HTTP/2 429
+content-type: application/json
+x-request-id: req_ratelimited
+retry-after: 1
+x-ratelimit-limit-requests: 500
+x-ratelimit-remaining-requests: 0
+x-ratelimit-reset-requests: 120ms
+x-ratelimit-limit-tokens: 200000
+x-ratelimit-remaining-tokens: 199950
+x-ratelimit-reset-tokens: 15ms
+

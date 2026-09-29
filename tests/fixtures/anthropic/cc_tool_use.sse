@@ -1,0 +1,66 @@
+event: message_start
+data: {"type":"message_start","message":{"model":"claude-sonnet-5","id":"msg_011CfUCCYjXaNem9RBtuxefh","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":2,"cache_creation_input_tokens":181,"cache_read_input_tokens":91328,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":181},"output_tokens":8,"service_tier":"standard","inference_geo":"not_available"},"diagnostics":null,"context_management":null}             }
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}              }
+
+event: ping
+data: {"type": "ping"}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"","estimated_tokens":null}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"Es8CCqgBCBIYAipAm9UzRcYUNSXXlHppKxLn89/bp5N6Dm6W8zPTWi6JUZX+zAeH7wIaWOeeAFO2RS+ToQj9PEPmrlvL9/FGm5l0xzIPY2xhdWRlLXNvbm5ldC01OABCCHRoaW5raW5nWiRjZjJlNTA2Zi0wZGVjLTRlZGYtOTBkYi02YjNlOTRmMzRiMGVyEDMRI0CBLLiA3fnYFhXEH3KIAQGoAe3w5NUGsAECEgzFxF/z0RDrAn9dCXoaDDUED/rfNmCBiNHTrSIwnacAGw4IwEbsdak8P6X7WP03E2iZ30z9D3uj+CCH6wXvBo/g5PRtWhqJzyyhU3ObKlSXZXlwJMbtAfWHQsC+OkLm54luTG/X1mLZUU8lK51x5frXmqJ0GsCChdrywGknQL3qc3Y2SPYjlAvmrU5itoCeB+sTjrYJ4EcyTgUTj8LsNqe3ZlQYAQ=="}         }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0               }
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01NuuuuQyxsfieTceKrcL72S","name":"Bash","input":{},"caller":{"type":"direct"}}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":""}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"comma"}  }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"nd\": \"l"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"s -la\""}    }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":", \"desc"}           }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"ription"}            }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\": \"Lis"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"t files"}     }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":" in cur"}       }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rent di"}        }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"rectory"}               }
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"}"}     }
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1             }
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":2,"cache_creation_input_tokens":181,"cache_read_input_tokens":91328,"output_tokens":105,"output_tokens_details":{"thinking_tokens":28},"iterations":[{"input_tokens":2,"output_tokens":105,"cache_read_input_tokens":91328,"cache_creation_input_tokens":181,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":181},"type":"message"}]},"context_management":{"applied_edits":[]}}
+
+event: message_stop
+data: {"type":"message_stop"    }
+

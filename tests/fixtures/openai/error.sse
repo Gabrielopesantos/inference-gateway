@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-Err","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-Err","object":"chat.completion.chunk","created":1790000000,"model":"gpt-5-mini-2025-08-07","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"error":{"message":"The server had an error while processing your request.","type":"server_error","param":null,"code":null}}
+

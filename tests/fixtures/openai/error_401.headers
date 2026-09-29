@@ -1,0 +1,12 @@
+HTTP/2 401 
+content-type: text/plain
+content-length: 256
+access-control-expose-headers: CF-Ray
+access-control-expose-headers: CF-Ray
+x-content-type-options: nosniff
+x-error-json: ewogICJlcnJvciI6IHsKICAgICJtZXNzYWdlIjogIkluY29ycmVjdCBBUEkga2V5IHByb3ZpZGVkOiBzay1pbnZhbGlkLiBZb3UgY2FuIGZpbmQgeW91ciBBUEkga2V5IGF0IGh0dHBzOi8vcGxhdGZvcm0ub3BlbmFpLmNvbS9hY2NvdW50L2FwaS1rZXlzLiIsCiAgICAidHlwZSI6ICJpbnZhbGlkX3JlcXVlc3RfZXJyb3IiLAogICAgImNvZGUiOiAiaW52YWxpZF9hcGlfa2V5IiwKICAgICJwYXJhbSI6IG51bGwKICB9LAogICJzdGF0dXMiOiA0MDEKfQ==
+x-openai-authorization-error: 401
+x-openai-ide-error-code: invalid_api_key
+x-openai-internal-caller: unknown_through_ide
+x-request-id: req_945be81bc47c4f65b982b50cc28f52e6
+
