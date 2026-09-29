@@ -35,6 +35,7 @@
               sqlite
               oha
               jq
+              mitmproxy
             ];
             env = {
               RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";

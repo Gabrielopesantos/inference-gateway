@@ -125,7 +125,7 @@ mod tests {
         let cli = Cli::try_parse_from(["ig", "--config", "gw.toml"]).unwrap();
         let Command::Serve(args) = cli.into_command().unwrap();
         assert_eq!(args.max_body, ByteSize::mib(32));
-        assert_eq!(args.idle_timeout, Duration::from_secs(300));
+        assert_eq!(args.idle_timeout, Duration::from_mins(5));
         assert_eq!(args.log_format, LogFormat::Text);
     }
 
