@@ -36,6 +36,7 @@
               oha
               jq
               mitmproxy
+              docker-compose
             ];
             env = {
               RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
