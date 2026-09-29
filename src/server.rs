@@ -13,6 +13,7 @@ use axum_server::Handle;
 use axum_server::tls_rustls::RustlsConfig;
 
 use crate::gateway::Gateway;
+use crate::modules::Scrape;
 use crate::{ingress, proxy};
 
 /// No gateway routes on this port, so no upstream name is reserved.
@@ -23,14 +24,21 @@ pub fn proxy_router(gw: Arc<Gateway>) -> Router {
         .with_state(gw)
 }
 
-pub fn admin_router() -> Router {
-    Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        // Placeholder until the prometheus module (phase 2).
-        .route(
+/// `/metrics` exists only with the `[prometheus]` module.
+pub fn admin_router(metrics: Option<Scrape>) -> Router {
+    let router = Router::new().route("/healthz", get(|| async { "ok" }));
+    match metrics {
+        Some(scrape) => router.route(
             "/metrics",
-            get(|| async { ([(header::CONTENT_TYPE, "text/plain; version=0.0.4")], "") }),
-        )
+            get(move || async move {
+                (
+                    [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+                    scrape(),
+                )
+            }),
+        ),
+        None => router,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -61,6 +69,7 @@ pub async fn serve(
     proxy_listener.set_nonblocking(true)?;
     admin_listener.set_nonblocking(true)?;
 
+    let admin_app = admin_router(gw.metrics.clone()).into_make_service();
     let proxy_app = proxy_router(gw).into_make_service_with_connect_info::<SocketAddr>();
     let proxy = async {
         match tls {
@@ -81,7 +90,7 @@ pub async fn serve(
     let admin = async {
         axum_server::from_tcp(admin_listener)?
             .handle(handles.admin.clone())
-            .serve(admin_router().into_make_service())
+            .serve(admin_app)
             .await
     };
 

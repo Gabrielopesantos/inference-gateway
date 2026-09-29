@@ -9,8 +9,10 @@ use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 use inference_gateway::config::Config;
-use inference_gateway::config::cli::{Cli, Command, GATEWAY_TOKEN_ENV, LogFormat, ServeArgs};
-use inference_gateway::gateway::Gateway;
+use inference_gateway::config::cli::{Cli, Command, LogFormat, ServeArgs};
+use inference_gateway::gateway::{Gateway, Secrets};
+use inference_gateway::identity::IDENTITY_SECRET_ENV;
+use inference_gateway::modules::{self, BuildCtx, Dispatcher};
 use inference_gateway::server::{self, Handles};
 
 #[tokio::main]
@@ -41,8 +43,16 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         .iter()
         .map(|u| format!("{} -> {} ({})", u.name, u.base_url, u.provider))
         .collect();
-    let token = std::env::var(GATEWAY_TOKEN_ENV).ok();
-    let gw = Gateway::build(config, &args, token)?;
+    let ctx = BuildCtx::default();
+    let dispatcher = Dispatcher::start(
+        modules::build(&config, &ctx)?,
+        &ctx,
+        Dispatcher::QUEUE_CAPACITY,
+    );
+    let gw = Gateway::build(config, &args, Secrets::from_env(), &dispatcher)?;
+    if gw.identity.is_none() {
+        info!("{IDENTITY_SECRET_ENV} unset; records carry no caller_id");
+    }
 
     if gw.ingress.allow_cidrs.is_empty()
         && gw.ingress.token.is_none()
@@ -91,12 +101,17 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
     ));
 
     tokio::select! {
-        res = &mut serving => return res.context("server task")?,
+        res = &mut serving => {
+            res.context("server task")??;
+            dispatcher.shutdown(args.shutdown_timeout).await;
+            return Ok(());
+        }
         res = server::shutdown_signal() => res?,
     }
     info!(grace = ?args.shutdown_timeout, "shutdown signal received; draining in-flight requests");
     handles.graceful_shutdown(args.shutdown_timeout);
     serving.await.context("server task")??;
+    dispatcher.shutdown(args.shutdown_timeout).await;
     info!("shutdown complete");
     Ok(())
 }
