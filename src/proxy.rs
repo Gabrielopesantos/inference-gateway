@@ -52,9 +52,14 @@ pub async fn forward(
     let start = Instant::now();
     let (parts, body) = req.into_parts();
     let (name, upstream_path) = split_path(parts.uri.path());
-    let route = gw
-        .route(name)
-        .ok_or_else(|| GatewayError::UnknownUpstream(name.to_owned()))?;
+    let Some(route) = gw.route(name) else {
+        warn!(
+            upstream = name,
+            path = parts.uri.path(),
+            "unknown upstream; client base URL must end in /{{upstream}}"
+        );
+        return Err(GatewayError::UnknownUpstream(name.to_owned()));
+    };
     let mut obs = Observation::new(
         &route.upstream.name,
         route.adapter.clone(),
