@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use ::prometheus::core::Collector;
 use ::prometheus::{
     CounterVec, Encoder as _, GaugeVec, HistogramOpts, HistogramVec, IntCounterVec, Opts, Registry,
     TextEncoder,
@@ -41,31 +42,20 @@ impl Prometheus {
     /// Metric registration fails (duplicate or invalid name).
     pub fn new(_cfg: &PrometheusFile, ctx: &BuildCtx) -> Result<Self> {
         let registry = Registry::new();
-        let counter = |name: &str, help: &str, labels: &[&str]| -> Result<IntCounterVec> {
-            let c = IntCounterVec::new(Opts::new(name, help), labels)?;
-            registry.register(Box::new(c.clone()))?;
-            Ok(c)
+        let counter = |name: &str, help: &str, labels: &[&str]| {
+            register(
+                &registry,
+                IntCounterVec::new(Opts::new(name, help), labels)?,
+            )
         };
-        let gauge = |name: &str, help: &str, labels: &[&str]| -> Result<GaugeVec> {
-            let g = GaugeVec::new(Opts::new(name, help), labels)?;
-            registry.register(Box::new(g.clone()))?;
-            Ok(g)
+        let gauge = |name: &str, help: &str, labels: &[&str]| {
+            register(&registry, GaugeVec::new(Opts::new(name, help), labels)?)
         };
         let histogram = |name: &str, help: &str, labels: &[&str], buckets: &[f64]| {
-            let h = HistogramVec::new(
-                HistogramOpts::new(name, help).buckets(buckets.to_vec()),
-                labels,
-            )?;
-            registry.register(Box::new(h.clone()))?;
-            anyhow::Ok(h)
+            let opts = HistogramOpts::new(name, help).buckets(buckets.to_vec());
+            register(&registry, HistogramVec::new(opts, labels)?)
         };
         let latency = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
-
-        let cost = CounterVec::new(
-            Opts::new("gateway_cost_usd_total", "Estimated spend in USD."),
-            MODEL_LABELS,
-        )?;
-        registry.register(Box::new(cost.clone()))?;
 
         Ok(Self {
             drops: ctx.drops.clone(),
@@ -84,7 +74,13 @@ impl Prometheus {
                 "Tokens by kind; input includes cache reads and writes.",
                 &["upstream", "provider", "model", "kind"],
             )?,
-            cost,
+            cost: register(
+                &registry,
+                CounterVec::new(
+                    Opts::new("gateway_cost_usd_total", "Estimated spend in USD."),
+                    MODEL_LABELS,
+                )?,
+            )?,
             ttfb: histogram(
                 "gateway_ttfb_seconds",
                 "Time to upstream response headers.",
@@ -133,11 +129,7 @@ impl Prometheus {
 
     #[allow(clippy::cast_precision_loss)]
     fn observe(&self, r: &RequestRecord) {
-        let model = r
-            .response_model
-            .as_deref()
-            .or(r.requested_model.as_deref())
-            .unwrap_or("unknown");
+        let model = r.model().unwrap_or("unknown");
         let provider = r.provider.as_str();
         let streaming = if r.streaming { "true" } else { "false" };
         let req = [
@@ -220,6 +212,11 @@ impl Prometheus {
         }
         String::from_utf8(out).unwrap_or_default()
     }
+}
+
+fn register<C: Collector + Clone + 'static>(registry: &Registry, metric: C) -> Result<C> {
+    registry.register(Box::new(metric.clone()))?;
+    Ok(metric)
 }
 
 #[async_trait]

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use ipnet::IpNet;
 
 use crate::config::cli::{GATEWAY_TOKEN_ENV, ServeArgs};
@@ -75,14 +75,18 @@ impl Gateway {
         secrets: Secrets,
         dispatcher: &Dispatcher,
     ) -> Result<Arc<Self>> {
-        let token = if config.ingress.require_token {
-            match secrets.gateway_token.filter(|t| !t.is_empty()) {
-                Some(t) => Some(t),
-                None => bail!("ingress.require_token is set but {GATEWAY_TOKEN_ENV} is empty"),
-            }
-        } else {
-            None
-        };
+        let token = config
+            .ingress
+            .require_token
+            .then(|| {
+                secrets
+                    .gateway_token
+                    .filter(|t| !t.is_empty())
+                    .with_context(|| {
+                        format!("ingress.require_token is set but {GATEWAY_TOKEN_ENV} is empty")
+                    })
+            })
+            .transpose()?;
 
         // `read_timeout` resets on every read, so it bounds silence, not total
         // stream length. A 3xx goes back to the client as is.

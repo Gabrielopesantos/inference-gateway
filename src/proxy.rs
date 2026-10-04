@@ -73,7 +73,7 @@ pub async fn forward(
         gw.identity.as_ref(),
     ));
 
-    let upstream_resp = match send(&gw, route, parts, body, &mut obs).await {
+    let upstream_resp = match send(&gw, route, &parts, upstream_path, body, &mut obs).await {
         Ok(resp) => resp,
         Err(e) => {
             obs.fail(&e);
@@ -96,12 +96,12 @@ pub async fn forward(
 async fn send(
     gw: &Gateway,
     route: &Route,
-    parts: Parts,
+    parts: &Parts,
+    rest: &str,
     body: Body,
     obs: &mut Observation,
 ) -> Result<reqwest::Response, GatewayError> {
     let upstream = &route.upstream;
-    let (_, rest) = split_path(parts.uri.path());
     let url = upstream_url(&upstream.base_url, rest, parts.uri.query())?;
 
     if content_length(&parts.headers).is_some_and(|len| len > gw.max_body) {
@@ -126,7 +126,7 @@ async fn send(
     );
 
     gw.client
-        .request(parts.method, url)
+        .request(parts.method.clone(), url)
         .headers(headers)
         .body(body)
         .send()

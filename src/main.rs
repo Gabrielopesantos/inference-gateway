@@ -101,16 +101,14 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
     ));
 
     tokio::select! {
-        res = &mut serving => {
-            res.context("server task")??;
-            dispatcher.shutdown(args.shutdown_timeout).await;
-            return Ok(());
+        res = &mut serving => res.context("server task")??,
+        res = server::shutdown_signal() => {
+            res?;
+            info!(grace = ?args.shutdown_timeout, "shutdown signal received; draining in-flight requests");
+            handles.graceful_shutdown(args.shutdown_timeout);
+            serving.await.context("server task")??;
         }
-        res = server::shutdown_signal() => res?,
     }
-    info!(grace = ?args.shutdown_timeout, "shutdown signal received; draining in-flight requests");
-    handles.graceful_shutdown(args.shutdown_timeout);
-    serving.await.context("server task")??;
     dispatcher.shutdown(args.shutdown_timeout).await;
     info!("shutdown complete");
     Ok(())

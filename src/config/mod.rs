@@ -33,11 +33,11 @@ pub struct UpstreamFile {
     pub inject_stream_usage: Option<bool>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IngressFile {
     #[serde(default)]
-    pub allow_cidrs: Vec<String>,
+    pub allow_cidrs: Vec<IpNet>,
     #[serde(default)]
     pub require_token: bool,
 }
@@ -57,7 +57,7 @@ pub struct PrometheusFile {}
 #[derive(Debug, Clone)]
 pub struct Config {
     pub upstreams: Vec<Upstream>,
-    pub ingress: Ingress,
+    pub ingress: IngressFile,
     pub cost: Option<CostFile>,
     pub prometheus: Option<PrometheusFile>,
 }
@@ -68,12 +68,6 @@ pub struct Upstream {
     pub provider: ProviderKind,
     pub base_url: Url,
     pub inject_stream_usage: bool,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Ingress {
-    pub allow_cidrs: Vec<IpNet>,
-    pub require_token: bool,
 }
 
 impl Config {
@@ -132,22 +126,9 @@ impl TryFrom<FileConfig> for Config {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        let allow_cidrs = file
-            .ingress
-            .allow_cidrs
-            .iter()
-            .map(|c| {
-                c.parse::<IpNet>()
-                    .with_context(|| format!("ingress.allow_cidrs: {c:?} is not a CIDR"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-
         Ok(Self {
             upstreams,
-            ingress: Ingress {
-                allow_cidrs,
-                require_token: file.ingress.require_token,
-            },
+            ingress: file.ingress,
             cost: file.cost,
             prometheus: file.prometheus,
         })
@@ -358,6 +339,7 @@ base_url = "https://x"
 [ingress]
 allow_cidrs = ["10.0.0.0/8", "nope"]
 "#);
-        assert!(e.contains(r#"ingress.allow_cidrs: "nope""#), "{e}");
+        assert!(e.contains("line 8"), "{e}");
+        assert!(e.contains("nope"), "{e}");
     }
 }

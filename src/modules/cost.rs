@@ -116,11 +116,7 @@ impl Module for Cost {
     }
 
     fn enrich(&self, rec: &mut RequestRecord) {
-        let Some(model) = rec
-            .response_model
-            .as_deref()
-            .or(rec.requested_model.as_deref())
-        else {
+        let Some(model) = rec.model() else {
             return;
         };
         if let Some(p) = self.price(model) {

@@ -71,7 +71,6 @@ impl ProviderAdapter for OpenAi {
         RateLimitSnapshot {
             requests_remaining: header_u64(headers, "x-ratelimit-remaining-requests"),
             tokens_remaining: header_u64(headers, "x-ratelimit-remaining-tokens"),
-            input_tokens_remaining: None,
             retry_after: retry_after(headers),
             ..RateLimitSnapshot::default()
         }

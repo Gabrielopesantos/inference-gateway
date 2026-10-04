@@ -55,3 +55,13 @@ pub struct RequestRecord {
     /// Set by the `cost` module; `None` for unpriced models.
     pub cost_usd: Option<f64>,
 }
+
+impl RequestRecord {
+    /// The model that answered, else the one requested.
+    #[must_use]
+    pub fn model(&self) -> Option<&str> {
+        self.response_model
+            .as_deref()
+            .or(self.requested_model.as_deref())
+    }
+}

@@ -27,7 +27,7 @@ impl Module for AccessLog {
             upstream = %r.upstream,
             method = %r.method,
             path = %r.path,
-            model = r.response_model.as_deref().or(r.requested_model.as_deref()),
+            model = r.model(),
             outcome = r.outcome.as_str(),
             status = r.http_status,
             error_type = r.error_type.as_deref(),
