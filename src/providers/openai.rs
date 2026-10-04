@@ -2,6 +2,7 @@
 //! `OpenRouter`). `prompt_tokens` includes cached tokens. Streams report usage
 //! only with `stream_options.include_usage`.
 
+use anyhow::{Result, bail};
 use axum::http::{HeaderMap, Method};
 use bytes::Bytes;
 use serde::Deserialize;
@@ -9,8 +10,9 @@ use serde::de::IgnoredAny;
 use serde_json::Value;
 
 use super::{
-    DeltaKind, Operation, ProviderAdapter, ProviderKind, RateLimitSnapshot, RequestInfo,
-    StreamEvent, StreamParser, Usage, header_u64, inspect_common, retry_after,
+    DeltaKind, Operation, Output, ProviderAdapter, ProviderKind, RateLimitSnapshot, RequestInfo,
+    RequestParts, StreamEvent, StreamParser, ToolCall, Usage, header_u64, inspect_common,
+    retry_after, split_body, sse_events, tool_input,
 };
 use crate::observe::sse::{SseEvent, SseParser};
 
@@ -224,6 +226,134 @@ impl RawUsage {
     }
 }
 
+// Content extraction; runs in the store, off the proxy path.
+
+pub(super) fn split_request(body: &[u8]) -> Result<RequestParts> {
+    let (messages, mut params) = split_body(body)?;
+    Ok(RequestParts {
+        system: None,
+        tools: params.remove("tools"),
+        messages,
+        params,
+    })
+}
+
+/// Only choice 0 is kept.
+pub(super) fn extract_output(raw: &[u8], streaming: bool) -> Result<Output> {
+    let mut acc = Accumulator::default();
+    if !streaming {
+        let resp: OutChunk = serde_json::from_slice(raw)?;
+        if resp.error.is_some() {
+            bail!("error response");
+        }
+        acc.apply(resp);
+        return Ok(acc.finish());
+    }
+    for ev in sse_events(raw) {
+        if let Ok(chunk) = serde_json::from_str::<OutChunk>(&ev.data) {
+            acc.apply(chunk);
+        }
+    }
+    Ok(acc.finish())
+}
+
+/// A stream chunk or a non-stream response; `message` and `delta` share a shape.
+#[derive(Deserialize)]
+struct OutChunk {
+    #[serde(default)]
+    choices: Vec<OutChoice>,
+    error: Option<IgnoredAny>,
+}
+
+#[derive(Deserialize)]
+struct OutChoice {
+    #[serde(default)]
+    index: u64,
+    delta: Option<OutMessage>,
+    message: Option<OutMessage>,
+    finish_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct OutMessage {
+    content: Option<String>,
+    refusal: Option<String>,
+    reasoning_content: Option<String>,
+    reasoning: Option<String>,
+    tool_calls: Option<Vec<OutToolCall>>,
+}
+
+/// Stream fragments carry `index`; a full response lists calls in order.
+#[derive(Deserialize)]
+struct OutToolCall {
+    index: Option<usize>,
+    id: Option<String>,
+    function: Option<OutFunction>,
+}
+
+#[derive(Deserialize)]
+struct OutFunction {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Default)]
+struct Accumulator {
+    out: Output,
+    /// `(id, name, arguments)` per tool call index.
+    calls: Vec<(String, String, String)>,
+}
+
+impl Accumulator {
+    fn apply(&mut self, chunk: OutChunk) {
+        for choice in chunk.choices.into_iter().filter(|c| c.index == 0) {
+            if let Some(stop) = choice.finish_reason {
+                self.out.stop_reason = Some(stop);
+            }
+            let Some(m) = choice.delta.or(choice.message) else {
+                continue;
+            };
+            for s in [m.content, m.refusal].into_iter().flatten() {
+                self.out.text.push_str(&s);
+            }
+            for s in [m.reasoning_content, m.reasoning].into_iter().flatten() {
+                self.out.thinking.push_str(&s);
+            }
+            for (pos, call) in m.tool_calls.into_iter().flatten().enumerate() {
+                let i = call.index.unwrap_or(pos);
+                if self.calls.len() <= i {
+                    self.calls.resize_with(i + 1, Default::default);
+                }
+                let (id, name, args) = &mut self.calls[i];
+                if let Some(v) = call.id {
+                    *id = v;
+                }
+                if let Some(f) = call.function {
+                    if let Some(v) = f.name {
+                        name.push_str(&v);
+                    }
+                    if let Some(v) = f.arguments {
+                        args.push_str(&v);
+                    }
+                }
+            }
+        }
+    }
+
+    fn finish(mut self) -> Output {
+        self.out.tool_calls = self
+            .calls
+            .into_iter()
+            .map(|(id, name, args)| ToolCall {
+                id,
+                name,
+                input: tool_input(&args),
+            })
+            .collect();
+        self.out
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -408,6 +538,82 @@ mod tests {
                 "{name}: {events:?}"
             );
         }
+    }
+
+    fn extract(raw: &[u8], streaming: bool) -> Output {
+        extract_output(raw, streaming).unwrap()
+    }
+
+    fn response(message: &serde_json::Value, finish: &str) -> Vec<u8> {
+        serde_json::json!({
+            "object": "chat.completion",
+            "choices": [{"index": 0, "message": message, "finish_reason": finish}]
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    #[test]
+    fn extracts_same_output_from_stream_and_json() {
+        let out = extract(TEXT_SSE, true);
+        let json = response(
+            &serde_json::json!({"role": "assistant", "content": "Hello! How can I help you today?"}),
+            "stop",
+        );
+        assert_eq!(out, extract(&json, false));
+        assert_eq!(out.stop_reason.as_deref(), Some("stop"));
+        assert_eq!(
+            extract(&fixture("text.json"), false).text,
+            "Hello there, how are you?"
+        );
+
+        let out = extract(&fixture("tool_use.sse"), true);
+        let json = response(
+            &serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": "call_fixture",
+                    "type": "function",
+                    "function": {"name": "get_weather", "arguments": "{\"city\":\"Lisbon\"}"}
+                }]
+            }),
+            "tool_calls",
+        );
+        assert_eq!(out, extract(&json, false));
+        assert_eq!(
+            out.tool_calls,
+            [ToolCall {
+                id: "call_fixture".into(),
+                name: "get_weather".into(),
+                input: serde_json::json!({"city": "Lisbon"}),
+            }]
+        );
+    }
+
+    #[test]
+    fn extracts_reasoning_content() {
+        let out = extract(&fixture("reasoning_content.sse"), true);
+        assert_eq!(out.thinking, "17 * 23 = 391.");
+        assert_eq!(out.text, "391");
+    }
+
+    #[test]
+    fn error_body_is_not_output() {
+        assert!(extract_output(RATE_LIMITED_JSON, false).is_err());
+    }
+
+    #[test]
+    fn system_stays_in_messages() {
+        let parts = split_request(
+                br#"{"model":"m","tools":[],"messages":[{"role":"system","content":"s"},{"role":"user","content":"hi"}]}"#,
+            )
+            .unwrap();
+        assert_eq!(parts.system, None);
+        assert_eq!(parts.tools, Some(serde_json::json!([])));
+        assert_eq!(parts.messages.len(), 2);
+        assert_eq!(parts.last_user_text().as_deref(), Some("hi"));
+        assert_eq!(parts.params.keys().collect::<Vec<_>>(), ["model"]);
     }
 
     fn fixture(name: &str) -> Vec<u8> {

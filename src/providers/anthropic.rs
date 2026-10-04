@@ -2,12 +2,17 @@
 //! in `message_delta` is cumulative. Claude Code hides thinking text: its
 //! `thinking_delta`s are empty, so they count as thinking regardless.
 
+use std::collections::BTreeMap;
+
+use anyhow::{Result, bail};
 use axum::http::{HeaderMap, Method};
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::{
-    DeltaKind, Operation, ProviderAdapter, ProviderKind, RateLimitSnapshot, RequestInfo,
-    StreamEvent, StreamParser, Usage, header_f64, header_u64, inspect_common, retry_after,
+    DeltaKind, Operation, Output, ProviderAdapter, ProviderKind, RateLimitSnapshot, RequestInfo,
+    RequestParts, StreamEvent, StreamParser, ToolCall, Usage, header_f64, header_u64,
+    inspect_common, retry_after, split_body, sse_events, tool_input,
 };
 use crate::observe::sse::{SseEvent, SseParser};
 
@@ -115,6 +120,27 @@ impl Parser {
             }
         }
     }
+}
+
+fn output(blocks: impl IntoIterator<Item = Block>, stop_reason: Option<String>) -> Output {
+    let mut out = Output {
+        stop_reason,
+        ..Output::default()
+    };
+    for block in blocks {
+        match block {
+            Block::Text { text } if !text.is_empty() => {
+                if !out.text.is_empty() {
+                    out.text.push_str("\n\n");
+                }
+                out.text.push_str(&text);
+            }
+            Block::Thinking { thinking } => out.thinking.push_str(&thinking),
+            Block::ToolUse { id, name, input } => out.tool_calls.push(ToolCall { id, name, input }),
+            Block::Text { .. } | Block::Other => {}
+        }
+    }
+    out
 }
 
 fn push_message(out: &mut Vec<StreamEvent>, model: Option<String>, usage: Option<RawUsage>) {
@@ -257,6 +283,130 @@ impl RawUsage {
             reasoning_tokens: self.output_tokens_details.and_then(|d| d.thinking_tokens),
         }
     }
+}
+
+// Content extraction; runs in the store, off the proxy path.
+
+pub(super) fn split_request(body: &[u8]) -> Result<RequestParts> {
+    let (messages, mut params) = split_body(body)?;
+    Ok(RequestParts {
+        system: params.remove("system"),
+        tools: params.remove("tools"),
+        messages,
+        params,
+    })
+}
+
+pub(super) fn extract_output(raw: &[u8], streaming: bool) -> Result<Output> {
+    if !streaming {
+        let m: OutMessage = serde_json::from_slice(raw)?;
+        if m.kind != "message" {
+            bail!("response type is {:?}, not message", m.kind);
+        }
+        return Ok(output(m.content, m.stop_reason));
+    }
+    // Tool input arrives as JSON fragments, parsed once complete.
+    let mut blocks: BTreeMap<u64, (Block, String)> = BTreeMap::new();
+    let mut stop_reason = None;
+    for ev in sse_events(raw) {
+        let Ok(ev) = serde_json::from_str::<OutEvent>(&ev.data) else {
+            continue;
+        };
+        match ev {
+            OutEvent::ContentBlockStart {
+                index,
+                content_block,
+            } => {
+                blocks.insert(index, (content_block, String::new()));
+            }
+            OutEvent::ContentBlockDelta { index, delta } => {
+                let Some((block, json)) = blocks.get_mut(&index) else {
+                    continue;
+                };
+                match (block, delta) {
+                    (Block::Text { text }, OutDelta::Text { text: t })
+                    | (Block::Thinking { thinking: text }, OutDelta::Thinking { thinking: t }) => {
+                        text.push_str(&t);
+                    }
+                    (Block::ToolUse { .. }, OutDelta::InputJson { partial_json }) => {
+                        json.push_str(&partial_json);
+                    }
+                    _ => {}
+                }
+            }
+            OutEvent::MessageDelta { delta } => stop_reason = delta.stop_reason,
+            OutEvent::Other => {}
+        }
+    }
+    let blocks = blocks.into_values().map(|(mut block, json)| {
+        if let Block::ToolUse { input, .. } = &mut block
+            && !json.is_empty()
+        {
+            *input = tool_input(&json);
+        }
+        block
+    });
+    Ok(output(blocks, stop_reason))
+}
+
+#[derive(Deserialize)]
+struct OutMessage {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    content: Vec<Block>,
+    stop_reason: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Block {
+    Text {
+        text: String,
+    },
+    Thinking {
+        #[serde(default)]
+        thinking: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        #[serde(default)]
+        input: Value,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OutEvent {
+    ContentBlockStart {
+        index: u64,
+        content_block: Block,
+    },
+    ContentBlockDelta {
+        index: u64,
+        delta: OutDelta,
+    },
+    MessageDelta {
+        delta: MessageDeltaBody,
+    },
+    #[serde(other)]
+    Other,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+enum OutDelta {
+    #[serde(rename = "text_delta")]
+    Text { text: String },
+    #[serde(rename = "thinking_delta")]
+    Thinking { thinking: String },
+    #[serde(rename = "input_json_delta")]
+    InputJson { partial_json: String },
+    #[serde(other)]
+    Other,
 }
 
 #[cfg(test)]
@@ -444,6 +594,110 @@ mod tests {
             Anthropic.rate_limits(&headers(&raw)),
             RateLimitSnapshot::default()
         );
+    }
+
+    fn extract(raw: &[u8], streaming: bool) -> Output {
+        extract_output(raw, streaming).unwrap()
+    }
+
+    #[test]
+    fn extracts_same_output_from_stream_and_json() {
+        let out = extract(TEXT_SSE, true);
+        assert_eq!(out, extract(TEXT_JSON, false));
+        assert_eq!(out.text, "Hello! How can I help you today?");
+        assert_eq!(out.stop_reason.as_deref(), Some("end_turn"));
+
+        let json = serde_json::json!({
+            "type": "message",
+            "content": [
+                {"type": "thinking", "thinking": "17 * 23 = 17 * 20 + 17 * 3 = 340 + 51 = 391.", "signature": "s"},
+                {"type": "text", "text": "391"}
+            ],
+            "stop_reason": "end_turn"
+        });
+        let out = extract(&fixture("thinking.sse"), true);
+        assert_eq!(out, extract(json.to_string().as_bytes(), false));
+        assert_eq!(out.text, "391");
+    }
+
+    #[test]
+    fn extracts_tool_call_from_stream() {
+        let out = extract(&fixture("cc_tool_use.sse"), true);
+        assert_eq!(
+            out.tool_calls,
+            [ToolCall {
+                id: "toolu_01NuuuuQyxsfieTceKrcL72S".into(),
+                name: "Bash".into(),
+                input: serde_json::json!({
+                    "command": "ls -la",
+                    "description": "List files in current directory"
+                }),
+            }]
+        );
+        assert_eq!(out.stop_reason.as_deref(), Some("tool_use"));
+        // Claude Code hides thinking text.
+        assert_eq!(out.thinking, "");
+        assert_eq!(
+            extract(&fixture("cc_text.sse"), true).text,
+            r#"{"title":"Arithmetic calculation"}"#
+        );
+    }
+
+    #[test]
+    fn truncated_stream_keeps_what_arrived() {
+        let raw = fixture("cc_tool_use.sse");
+        let cut = raw.windows(7).position(|w| w == b"rent di").unwrap();
+        let out = extract(&raw[..cut], true);
+        assert_eq!(out.tool_calls.len(), 1);
+        assert!(out.tool_calls[0].input.is_string());
+        assert_eq!(out.stop_reason, None);
+    }
+
+    #[test]
+    fn error_body_is_not_output() {
+        assert!(extract_output(RATE_LIMITED_JSON, false).is_err());
+        assert!(extract_output(b"{", false).is_err());
+    }
+
+    #[test]
+    fn splits_request() {
+        let parts = split_request(
+                br#"{"model":"m","system":[{"type":"text","text":"be brief"}],"tools":[{"name":"t"}],"messages":[{"role":"user","content":"hi"}],"max_tokens":9}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            parts.system,
+            Some(serde_json::json!([{"type": "text", "text": "be brief"}]))
+        );
+        assert_eq!(parts.tools, Some(serde_json::json!([{"name": "t"}])));
+        assert_eq!(
+            parts.messages,
+            [serde_json::json!({"role": "user", "content": "hi"})]
+        );
+        assert_eq!(
+            parts.params.keys().collect::<Vec<_>>(),
+            ["model", "max_tokens"]
+        );
+        assert!(split_request(b"[]").is_err());
+        assert!(split_request(br#"{"model":"m"}"#).is_err());
+    }
+
+    #[test]
+    fn last_user_text_skips_tool_results() {
+        let parts = split_request(
+                br#"{"messages":[
+                    {"role":"user","content":"old"},
+                    {"role":"user","content":[{"type":"text","text":"list files"},{"type":"text","text":"please"}]},
+                    {"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]},
+                    {"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"a.txt"}]}
+                ]}"#,
+            )
+            .unwrap();
+        assert_eq!(
+            parts.last_user_text().as_deref(),
+            Some("list files\nplease")
+        );
+        assert_eq!(RequestParts::default().last_user_text(), None);
     }
 
     fn fixture(name: &str) -> Vec<u8> {

@@ -8,11 +8,14 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use anyhow::{Result, bail};
 use axum::http::{HeaderMap, Method, header};
 use bytes::Bytes;
 use serde::Deserialize;
+use serde_json::{Map, Value};
 
 use crate::config::Upstream;
+use crate::observe::sse::{SseEvent, SseParser};
 
 /// Wire format of an upstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -127,6 +130,59 @@ pub struct RateLimitSnapshot {
     pub window_7d_utilization: Option<f64>,
 }
 
+/// A request body split for per-part storage. Parts keep their JSON as sent.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RequestParts {
+    /// Anthropic only; `OpenAI` system messages stay in `messages`.
+    pub system: Option<Value>,
+    pub tools: Option<Value>,
+    pub messages: Vec<Value>,
+    /// Remaining top-level fields (model, `max_tokens`, temperature, ...).
+    pub params: Map<String, Value>,
+}
+
+impl RequestParts {
+    /// Text of the last user message that has any, so tool results are skipped.
+    #[must_use]
+    pub fn last_user_text(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .rev()
+            .filter(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+            .find_map(|m| {
+                let text = match m.get("content")? {
+                    Value::String(s) => s.clone(),
+                    Value::Array(parts) => parts
+                        .iter()
+                        .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
+                        .filter_map(|p| p.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    _ => return None,
+                };
+                (!text.is_empty()).then_some(text)
+            })
+    }
+}
+
+/// What the model produced, from a raw response.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Output {
+    /// Visible text; separate text blocks are joined with a blank line.
+    pub text: String,
+    pub thinking: String,
+    pub tool_calls: Vec<ToolCall>,
+    pub stop_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    /// Parsed arguments; the raw string when not valid JSON (e.g. truncated).
+    pub input: Value,
+}
+
 pub trait StreamParser: Send {
     fn push(&mut self, chunk: &[u8], out: &mut Vec<StreamEvent>);
     fn finish(&mut self, out: &mut Vec<StreamEvent>);
@@ -164,6 +220,61 @@ pub fn adapter(upstream: &Upstream) -> Arc<dyn ProviderAdapter> {
             inject_stream_usage: upstream.inject_stream_usage,
         }),
     }
+}
+
+impl ProviderKind {
+    /// Stateless, so it needs no upstream settings. Runs in the store.
+    ///
+    /// # Errors
+    ///
+    /// Body is not a JSON object with a `messages` array.
+    pub fn split_request(self, body: &[u8]) -> Result<RequestParts> {
+        match self {
+            Self::Anthropic => anthropic::split_request(body),
+            Self::Openai => openai::split_request(body),
+        }
+    }
+
+    /// `raw` is SSE when `streaming`, else JSON. A truncated stream yields
+    /// what arrived.
+    ///
+    /// # Errors
+    ///
+    /// JSON body that is not a successful response.
+    pub fn extract_output(self, raw: &[u8], streaming: bool) -> Result<Output> {
+        match self {
+            Self::Anthropic => anthropic::extract_output(raw, streaming),
+            Self::Openai => openai::extract_output(raw, streaming),
+        }
+    }
+}
+
+/// Top-level `messages` array, and every other field of the body.
+fn split_body(body: &[u8]) -> Result<(Vec<Value>, Map<String, Value>)> {
+    let Value::Object(mut params) = serde_json::from_slice(body)? else {
+        bail!("request body is not a JSON object");
+    };
+    let Some(Value::Array(messages)) = params.remove("messages") else {
+        bail!("request has no messages array");
+    };
+    Ok((messages, params))
+}
+
+/// Every event of a raw SSE body, including a truncated tail.
+fn sse_events(raw: &[u8]) -> Vec<SseEvent> {
+    let mut events = Vec::new();
+    let mut sse = SseParser::new();
+    sse.push(raw, &mut events);
+    sse.finish(&mut events);
+    events
+}
+
+/// Empty arguments mean no arguments.
+fn tool_input(raw: &str) -> Value {
+    if raw.is_empty() {
+        return Value::Object(Map::new());
+    }
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_owned()))
 }
 
 /// Fields shared by both providers' request bodies.
