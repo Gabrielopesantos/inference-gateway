@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use ipnet::IpNet;
 
+use crate::capture;
 use crate::config::cli::{GATEWAY_TOKEN_ENV, ServeArgs};
 use crate::config::{Config, Upstream};
 use crate::identity::{IDENTITY_SECRET_ENV, IdentitySecret};
@@ -22,6 +23,8 @@ pub struct Gateway {
     pub identity: Option<IdentitySecret>,
     pub sink: RecordSink,
     pub metrics: Option<Scrape>,
+    /// `None` without a `[capture]` section.
+    pub capture: Option<capture::Policy>,
 }
 
 #[derive(Debug)]
@@ -37,6 +40,7 @@ impl fmt::Debug for Gateway {
             .field("max_body", &self.max_body)
             .field("ingress", &self.ingress)
             .field("identity", &self.identity)
+            .field("capture", &self.capture)
             .finish_non_exhaustive()
     }
 }
@@ -120,6 +124,7 @@ impl Gateway {
                 .and_then(IdentitySecret::new),
             sink: dispatcher.sink(),
             metrics: dispatcher.scrape(),
+            capture: config.capture,
         }))
     }
 

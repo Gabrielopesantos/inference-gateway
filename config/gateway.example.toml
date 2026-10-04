@@ -36,3 +36,25 @@ pricing_file = "pricing.toml"
 
 # Serves metrics on the admin listener at /metrics.
 [prometheus]
+
+# Persists every trace, and captured content, in SQLite. Relative paths are
+# relative to this file.
+[store]
+path = "gateway.db"
+
+# Content capture (prompts and responses). Needs [store].
+[capture]
+max_bytes = "8 MiB"   # raw-response copy; longer responses are stored truncated
+retention = "30d"     # content only; trace rows are kept
+
+# First matching rule wins; no match means no capture. All `match` keys are
+# optional. `x-gateway-capture: 0|1` overrides a rule only with
+# allow_header_override.
+[[capture.rules]]
+match = { upstream = "anthropic", tags = { project = "gateway-dev" } }
+capture = true
+allow_header_override = true
+
+[[capture.rules]]
+match = { model = "claude-haiku-*" }
+sample = 0.25         # deterministic per trace id

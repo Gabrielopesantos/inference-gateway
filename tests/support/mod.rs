@@ -25,7 +25,7 @@ pub struct TestGateway {
     pub task: JoinHandle<anyhow::Result<()>>,
     pub ctx: BuildCtx,
     dispatcher: Dispatcher,
-    records: mpsc::UnboundedReceiver<RequestRecord>,
+    records: mpsc::UnboundedReceiver<CompletedExchange>,
 }
 
 impl TestGateway {
@@ -39,6 +39,11 @@ impl TestGateway {
 
     /// Next finished record; panics after 2 s.
     pub async fn record(&mut self) -> RequestRecord {
+        self.exchange().await.record
+    }
+
+    /// Next finished exchange, with captured content; panics after 2 s.
+    pub async fn exchange(&mut self) -> CompletedExchange {
         tokio::time::timeout(Duration::from_secs(2), self.records.recv())
             .await
             .expect("no record within 2 s")
@@ -48,7 +53,7 @@ impl TestGateway {
     /// Asserts no further record arrives within `wait`.
     pub async fn assert_no_record(&mut self, wait: Duration) {
         if let Ok(Some(r)) = tokio::time::timeout(wait, self.records.recv()).await {
-            panic!("unexpected extra record: {r:?}");
+            panic!("unexpected extra record: {:?}", r.record);
         }
     }
 
@@ -73,8 +78,8 @@ impl TestGateway {
     }
 }
 
-/// Forwards every record to the test.
-struct Collector(mpsc::UnboundedSender<RequestRecord>);
+/// Forwards every exchange to the test.
+struct Collector(mpsc::UnboundedSender<CompletedExchange>);
 
 #[async_trait]
 impl Module for Collector {
@@ -87,7 +92,7 @@ impl Module for Collector {
     }
 
     async fn export(&self, ex: Arc<CompletedExchange>) {
-        let _ = self.0.send(ex.record.clone());
+        let _ = self.0.send((*ex).clone());
     }
 }
 

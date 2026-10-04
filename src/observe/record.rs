@@ -2,6 +2,7 @@
 
 use std::time::SystemTime;
 
+use bytes::Bytes;
 use uuid::Uuid;
 
 use super::timings::Timings;
@@ -64,4 +65,20 @@ impl RequestRecord {
             .as_deref()
             .or(self.requested_model.as_deref())
     }
+}
+
+/// What export modules receive: the record plus captured content, if any.
+#[derive(Debug, Clone)]
+pub struct CompletedExchange {
+    pub record: RequestRecord,
+    pub content: Option<CapturedContent>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CapturedContent {
+    /// As sent by the client, before any gateway rewrite.
+    pub request_body: Bytes,
+    /// Raw upstream bytes (SSE or JSON), at most `capture.max_bytes`.
+    pub raw_response: Bytes,
+    pub truncated: bool,
 }

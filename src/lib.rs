@@ -1,5 +1,6 @@
 //! `inference-gateway` - a transparent streaming gateway for LLM APIs.
 
+pub mod capture;
 pub mod config;
 pub mod error;
 pub mod gateway;

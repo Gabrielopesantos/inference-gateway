@@ -1,11 +1,12 @@
 //! Observation of proxied exchanges. Bytes reach the client unchanged; a copy
 //! feeds the adapter's parser. Every [`Observation`] emits exactly one
-//! [`RequestRecord`]: on completion, failure, or `Drop` (client cancel).
+//! [`CompletedExchange`]: on completion, failure, or `Drop` (client cancel).
 
 pub mod record;
 pub mod sse;
 pub mod timings;
 
+use std::collections::BTreeMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -17,7 +18,7 @@ use futures_util::Stream;
 use tokio::time::Instant;
 use uuid::Uuid;
 
-use self::record::{Outcome, RequestRecord};
+use self::record::{CapturedContent, CompletedExchange, Outcome, RequestRecord};
 use self::timings::Clock;
 use crate::error::GatewayError;
 use crate::identity::Principal;
@@ -25,8 +26,8 @@ use crate::providers::{
     Operation, ProviderAdapter, RateLimitSnapshot, RequestInfo, StreamEvent, StreamParser, Usage,
 };
 
-/// Receives each finished record. Called on the proxy path, so it must not block.
-pub type RecordSink = Arc<dyn Fn(RequestRecord) + Send + Sync>;
+/// Receives each finished exchange. Called on the proxy path, so it must not block.
+pub type RecordSink = Arc<dyn Fn(CompletedExchange) + Send + Sync>;
 
 /// Non-stream bodies above this are passed through unparsed.
 const MAX_JSON_TEE: usize = 8 * 1024 * 1024;
@@ -34,7 +35,19 @@ const MAX_JSON_TEE: usize = 8 * 1024 * 1024;
 enum Parser {
     None,
     Stream(Box<dyn StreamParser>),
-    Json { buf: BytesMut, overflow: bool },
+    Json {
+        buf: BytesMut,
+        overflow: bool,
+    },
+    /// Non-stream body parsed from the capture copy, so it is buffered once.
+    CapturedJson,
+}
+
+struct Capture {
+    request: Bytes,
+    response: BytesMut,
+    limit: usize,
+    truncated: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -72,6 +85,9 @@ pub struct Observation {
     response_model: Option<String>,
     stop_reason: Option<String>,
     error_type: Option<String>,
+
+    /// `None` unless capturing: no response copy is kept.
+    capture: Option<Capture>,
 }
 
 impl Observation {
@@ -106,7 +122,28 @@ impl Observation {
             response_model: None,
             stop_reason: None,
             error_type: None,
+            capture: None,
         }
+    }
+
+    #[must_use]
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    #[must_use]
+    pub fn tags(&self) -> &BTreeMap<String, String> {
+        &self.principal.tags
+    }
+
+    /// Keep `request` and up to `limit` bytes of the raw response.
+    pub fn capture(&mut self, request: Bytes, limit: usize) {
+        self.capture = Some(Capture {
+            request,
+            response: BytesMut::new(),
+            limit,
+            truncated: false,
+        });
     }
 
     pub fn target(&mut self, method: &Method, path: &str) {
@@ -139,6 +176,12 @@ impl Observation {
         if self.operation.is_some() {
             self.parser = if sse {
                 Parser::Stream(self.adapter.stream_parser())
+            } else if self
+                .capture
+                .as_ref()
+                .is_some_and(|c| c.limit >= MAX_JSON_TEE)
+            {
+                Parser::CapturedJson
             } else {
                 Parser::Json {
                     buf: BytesMut::new(),
@@ -175,8 +218,18 @@ impl Observation {
         let now = Instant::now();
         self.clock.chunk(now);
         self.received += bytes.len() as u64;
+        if let Some(c) = &mut self.capture
+            && !c.truncated
+        {
+            let room = c.limit - c.response.len();
+            if bytes.len() > room {
+                c.truncated = true;
+            }
+            c.response
+                .extend_from_slice(&bytes[..bytes.len().min(room)]);
+        }
         match &mut self.parser {
-            Parser::None => {}
+            Parser::None | Parser::CapturedJson => {}
             Parser::Stream(p) => {
                 p.push(bytes, &mut self.events);
                 self.apply_events(now);
@@ -233,6 +286,15 @@ impl Observation {
                     self.apply_events(now);
                 }
             }
+            Parser::CapturedJson => {
+                if let Some(c) = &self.capture
+                    && !c.truncated
+                    && !c.response.is_empty()
+                {
+                    self.events = self.adapter.parse_response(&c.response);
+                    self.apply_events(now);
+                }
+            }
         }
 
         let failed_status = self
@@ -277,7 +339,12 @@ impl Observation {
             rate_limits: self.rate_limits,
             cost_usd: None,
         };
-        (self.sink)(record);
+        let content = self.capture.take().map(|c| CapturedContent {
+            request_body: c.request,
+            raw_response: c.response.freeze(),
+            truncated: c.truncated,
+        });
+        (self.sink)(CompletedExchange { record, content });
     }
 }
 
@@ -333,11 +400,17 @@ mod tests {
         Duration::from_millis(n)
     }
 
+    fn collect<T: Send + 'static>(
+        f: fn(CompletedExchange) -> T,
+    ) -> (RecordSink, Arc<Mutex<Vec<T>>>) {
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let sink_out = out.clone();
+        let sink: RecordSink = Arc::new(move |ex| sink_out.lock().unwrap().push(f(ex)));
+        (sink, out)
+    }
+
     fn collector() -> (RecordSink, Arc<Mutex<Vec<RequestRecord>>>) {
-        let records = Arc::new(Mutex::new(Vec::new()));
-        let sink_records = records.clone();
-        let sink: RecordSink = Arc::new(move |r| sink_records.lock().unwrap().push(r));
-        (sink, records)
+        collect(|ex| ex.record)
     }
 
     fn observation(sink: RecordSink) -> Observation {
@@ -507,5 +580,90 @@ mod tests {
             records[0].error_type.as_deref(),
             Some("upstream_stream_error")
         );
+    }
+
+    fn json_headers(len: usize) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+        h.insert(header::CONTENT_LENGTH, len.into());
+        h
+    }
+
+    /// Runs `chunks` through an observation; returns the exchange and the bytes the client got.
+    async fn exchange(
+        capture: Option<usize>,
+        headers: HeaderMap,
+        chunks: Vec<Bytes>,
+    ) -> (CompletedExchange, Vec<u8>) {
+        let (sink, out) = collect(|ex| ex);
+        let mut obs = observation(sink);
+        if let Some(limit) = capture {
+            obs.capture(Bytes::from_static(b"{\"req\":1}"), limit);
+        }
+        obs.response(StatusCode::OK, &headers);
+        let mut body = obs.into_body(scripted(chunks, ms(1)));
+        let mut client = Vec::new();
+        while let Some(c) = body.next().await {
+            client.extend_from_slice(&c.unwrap());
+        }
+        drop(body);
+        let mut out = out.lock().unwrap();
+        assert_eq!(out.len(), 1);
+        (out.pop().unwrap(), client)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_capture_keeps_no_content() {
+        let (ex, _) = exchange(None, sse_headers(), events(TEXT_SSE)).await;
+        assert!(ex.content.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn captures_request_and_raw_stream() {
+        let (ex, client) = exchange(Some(1 << 20), sse_headers(), events(TEXT_SSE)).await;
+        let c = ex.content.unwrap();
+        assert_eq!(&c.request_body[..], b"{\"req\":1}");
+        assert_eq!(&c.raw_response[..], TEXT_SSE);
+        assert_eq!(client, TEXT_SSE);
+        assert!(!c.truncated);
+        assert_eq!(ex.record.usage.output_tokens, Some(12));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn oversized_response_is_truncated_not_the_client() {
+        let (ex, client) = exchange(Some(100), sse_headers(), events(TEXT_SSE)).await;
+        let c = ex.content.unwrap();
+        assert!(c.truncated);
+        assert_eq!(&c.raw_response[..], &TEXT_SSE[..100]);
+        assert_eq!(client, TEXT_SSE);
+        assert_eq!(ex.record.usage.output_tokens, Some(12));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn captured_json_is_parsed_from_either_buffer() {
+        let chunks = || {
+            let (a, b) = TEXT_JSON.split_at(40);
+            vec![Bytes::from_static(a), Bytes::from_static(b)]
+        };
+        // Parsed from the capture copy.
+        let (ex, _) = exchange(Some(MAX_JSON_TEE), json_headers(TEXT_JSON.len()), chunks()).await;
+        assert_eq!(&ex.content.unwrap().raw_response[..], TEXT_JSON);
+        assert_eq!(ex.record.usage.output_tokens, Some(12));
+        // Capture limit below the tee: parsed from the tee, copy truncated.
+        let (ex, _) = exchange(Some(10), json_headers(TEXT_JSON.len()), chunks()).await;
+        assert!(ex.content.unwrap().truncated);
+        assert_eq!(ex.record.usage.output_tokens, Some(12));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn gateway_failure_keeps_captured_request() {
+        let (sink, out) = collect(|ex| ex);
+        let mut obs = observation(sink);
+        obs.capture(Bytes::from_static(b"{}"), 64);
+        obs.fail(&GatewayError::UpstreamTimeout("t".into()));
+        let ex = out.lock().unwrap().pop().unwrap();
+        let c = ex.content.unwrap();
+        assert_eq!(&c.request_body[..], b"{}");
+        assert!(c.raw_response.is_empty());
     }
 }

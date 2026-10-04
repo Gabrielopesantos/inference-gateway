@@ -3,14 +3,18 @@
 
 pub mod cli;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
+use bytesize::ByteSize;
+use globset::Glob;
 use ipnet::IpNet;
 use serde::Deserialize;
 use url::Url;
 
+use crate::capture;
 use crate::providers::ProviderKind;
 
 /// Unknown keys are errors, so a typo never silently disables a setting.
@@ -22,6 +26,8 @@ pub struct FileConfig {
     pub ingress: IngressFile,
     pub cost: Option<CostFile>,
     pub prometheus: Option<PrometheusFile>,
+    pub store: Option<StoreFile>,
+    pub capture: Option<CaptureFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +58,65 @@ pub struct CostFile {
 #[serde(deny_unknown_fields)]
 pub struct PrometheusFile {}
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoreFile {
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureFile {
+    #[serde(default = "default_max_bytes")]
+    pub max_bytes: ByteSize,
+    #[serde(default = "default_retention", with = "humantime_serde")]
+    pub retention: Duration,
+    #[serde(default)]
+    pub rules: Vec<RuleFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleFile {
+    #[serde(rename = "match", default)]
+    pub matcher: MatchFile,
+    #[serde(default = "default_true")]
+    pub capture: bool,
+    #[serde(default = "default_sample")]
+    pub sample: f64,
+    #[serde(default)]
+    pub allow_header_override: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MatchFile {
+    pub upstream: Option<String>,
+    pub model: Option<String>,
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
+}
+
+fn default_max_bytes() -> ByteSize {
+    ByteSize::mib(8)
+}
+
+/// Content retention without a `[capture]` section, for content captured
+/// by an earlier config.
+pub const DEFAULT_RETENTION: Duration = Duration::from_hours(30 * 24);
+
+fn default_retention() -> Duration {
+    DEFAULT_RETENTION
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sample() -> f64 {
+    1.0
+}
+
 /// Module sections stay ungated here, so a section for a disabled feature
 /// still parses and `modules::build` can name the missing feature.
 #[derive(Debug, Clone)]
@@ -60,6 +125,8 @@ pub struct Config {
     pub ingress: IngressFile,
     pub cost: Option<CostFile>,
     pub prometheus: Option<PrometheusFile>,
+    pub store: Option<StoreFile>,
+    pub capture: Option<capture::Policy>,
 }
 
 #[derive(Debug, Clone)]
@@ -80,8 +147,13 @@ impl Config {
         let mut config =
             Self::parse(&text).with_context(|| format!("config {}", path.display()))?;
         // Relative paths in the file are relative to the file.
-        if let (Some(cost), Some(dir)) = (&mut config.cost, path.parent()) {
-            cost.pricing_file = dir.join(&cost.pricing_file);
+        if let Some(dir) = path.parent() {
+            if let Some(cost) = &mut config.cost {
+                cost.pricing_file = dir.join(&cost.pricing_file);
+            }
+            if let Some(store) = &mut config.store {
+                store.path = dir.join(&store.path);
+            }
         }
         Ok(config)
     }
@@ -126,13 +198,67 @@ impl TryFrom<FileConfig> for Config {
             })
             .collect::<Result<Vec<_>>>()?;
 
+        if file.capture.is_some() && file.store.is_none() {
+            bail!("[capture] needs a [store] section");
+        }
+        let capture = file
+            .capture
+            .map(|c| capture_policy(c, &upstreams))
+            .transpose()?;
+
         Ok(Self {
             upstreams,
             ingress: file.ingress,
             cost: file.cost,
             prometheus: file.prometheus,
+            store: file.store,
+            capture,
         })
     }
+}
+
+fn capture_policy(file: CaptureFile, upstreams: &[Upstream]) -> Result<capture::Policy> {
+    let rules = file
+        .rules
+        .into_iter()
+        .enumerate()
+        .map(|(i, r)| capture_rule(r, upstreams).with_context(|| format!("capture.rules[{i}]")))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(capture::Policy {
+        max_bytes: usize::try_from(file.max_bytes.as_u64()).unwrap_or(usize::MAX),
+        retention: file.retention,
+        rules,
+    })
+}
+
+fn capture_rule(r: RuleFile, upstreams: &[Upstream]) -> Result<capture::Rule> {
+    let m = r.matcher;
+    if let Some(u) = &m.upstream
+        && !upstreams.iter().any(|x| &x.name == u)
+    {
+        bail!("match.upstream: no upstream named {u:?}");
+    }
+    let model = m
+        .model
+        .map(|g| Glob::new(&g).map(|g| g.compile_matcher()))
+        .transpose()
+        .context("match.model")?;
+    if !(0.0..=1.0).contains(&r.sample) {
+        bail!("sample must be in [0, 1], got {}", r.sample);
+    }
+    Ok(capture::Rule {
+        upstream: m.upstream,
+        model,
+        // Tag keys come from header names, which are lowercase.
+        tags: m
+            .tags
+            .into_iter()
+            .map(|(k, v)| (k.to_ascii_lowercase(), v))
+            .collect(),
+        capture: r.capture,
+        sample: r.sample,
+        allow_header_override: r.allow_header_override,
+    })
 }
 
 /// An upstream name is one URL path segment.
@@ -321,6 +447,78 @@ inject_stream_usage = false
             cfg.cost.unwrap().pricing_file,
             dir.path().join("pricing.toml")
         );
+    }
+
+    const ONE: &str =
+        "[[upstreams]]\nname = \"a\"\nprovider = \"openai\"\nbase_url = \"https://x\"\n\n";
+
+    #[test]
+    fn capture_parses_with_defaults() {
+        let cfg = Config::parse(EXAMPLE).unwrap();
+        let p = cfg.capture.unwrap();
+        assert_eq!(p.max_bytes, 8 * 1024 * 1024);
+        assert_eq!(p.retention, Duration::from_hours(30 * 24));
+        assert_eq!(p.rules.len(), 2);
+        assert!(p.rules[0].allow_header_override);
+        assert_eq!(p.rules[0].tags["project"], "gateway-dev");
+        assert!((p.rules[1].sample - 0.25).abs() < f64::EPSILON);
+        assert!(
+            p.rules[1]
+                .model
+                .as_ref()
+                .unwrap()
+                .is_match("claude-haiku-4-5")
+        );
+
+        let cfg = Config::parse(&format!(
+            "{ONE}[store]\npath = \"g.db\"\n\n[capture]\nmax_bytes = \"1 KiB\"\nretention = \"2h\"\n\n[[capture.rules]]\nmatch = {{ tags = {{ Project = \"p\" }} }}\n"
+        ))
+        .unwrap();
+        let p = cfg.capture.unwrap();
+        assert_eq!(p.max_bytes, 1024);
+        assert_eq!(p.retention, Duration::from_hours(2));
+        assert!(p.rules[0].capture);
+        assert!(p.rules[0].tags.contains_key("project"));
+    }
+
+    #[test]
+    fn capture_needs_store() {
+        let e = err(&format!("{ONE}[capture]\n"));
+        assert!(e.contains("[capture] needs a [store]"), "{e}");
+    }
+
+    #[test]
+    fn capture_rule_errors_name_the_rule() {
+        let store = "[store]\npath = \"g.db\"\n\n[capture]\n";
+        let rule = |body: &str| {
+            err(&format!(
+                "{ONE}{store}[[capture.rules]]\ncapture = true\n\n[[capture.rules]]\n{body}\n"
+            ))
+        };
+        let e = rule("match = { upstream = \"nope\" }");
+        assert!(e.contains("capture.rules[1]: match.upstream"), "{e}");
+        let e = rule("match = { model = \"a[\" }");
+        assert!(e.contains("capture.rules[1]: match.model"), "{e}");
+        let e = rule("sample = 1.5");
+        assert!(e.contains("capture.rules[1]: sample"), "{e}");
+    }
+
+    #[test]
+    fn capture_type_error_reports_line_and_column() {
+        let e = err(&format!(
+            "{ONE}[store]\npath = \"g.db\"\n\n[capture]\nretention = \"soon\"\n"
+        ));
+        assert!(e.contains("line 10"), "{e}");
+        assert!(e.contains("retention"), "{e}");
+    }
+
+    #[test]
+    fn store_path_is_relative_to_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gw.toml");
+        std::fs::write(&path, format!("{ONE}[store]\npath = \"gateway.db\"\n")).unwrap();
+        let cfg = Config::load(&path).unwrap();
+        assert_eq!(cfg.store.unwrap().path, dir.path().join("gateway.db"));
     }
 
     #[test]

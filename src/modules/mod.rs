@@ -22,16 +22,12 @@ use tracing::{debug, warn};
 use crate::config::Config;
 use crate::observe::RecordSink;
 use crate::observe::record::RequestRecord;
+pub use crate::observe::record::{CapturedContent, CompletedExchange};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Enrich,
     Export,
-}
-
-#[derive(Debug)]
-pub struct CompletedExchange {
-    pub record: RequestRecord,
 }
 
 /// Renders the admin `/metrics` body.
@@ -174,7 +170,7 @@ impl Dispatcher {
     #[must_use]
     pub fn sink(&self) -> RecordSink {
         let inner = self.inner.clone();
-        Arc::new(move |record| inner.dispatch(record))
+        Arc::new(move |ex| inner.dispatch(ex))
     }
 
     #[must_use]
@@ -201,11 +197,11 @@ impl Dispatcher {
 }
 
 impl Inner {
-    fn dispatch(&self, mut record: RequestRecord) {
+    fn dispatch(&self, mut ex: CompletedExchange) {
         for m in &self.enrich {
-            m.enrich(&mut record);
+            m.enrich(&mut ex.record);
         }
-        let ex = Arc::new(CompletedExchange { record });
+        let ex = Arc::new(ex);
         let exports = self.exports.read().unwrap_or_else(PoisonError::into_inner);
         for q in exports.iter() {
             if let Err(TrySendError::Full(_)) = q.tx.try_send(ex.clone()) {

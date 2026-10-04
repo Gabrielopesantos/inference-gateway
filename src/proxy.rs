@@ -22,7 +22,7 @@ use url::Url;
 
 use crate::error::GatewayError;
 use crate::gateway::{Gateway, Route};
-use crate::identity::Principal;
+use crate::identity::{self, Principal};
 use crate::observe::Observation;
 use crate::redact;
 
@@ -111,6 +111,18 @@ async fn send(
 
     if let Some(op) = route.adapter.classify(&parts.method, rest) {
         let info = route.adapter.inspect_request(op, &body);
+        if let Some(policy) = &gw.capture
+            && policy.decide(
+                &upstream.name,
+                info.model.as_deref(),
+                obs.tags(),
+                identity::capture_header(&parts.headers),
+                obs.id(),
+            )
+        {
+            // Zero-copy; keeps the client's body, not the rewritten one.
+            obs.capture(body.clone(), policy.max_bytes);
+        }
         body = route.adapter.rewrite_request(&info, body);
         obs.request(op, info);
     }

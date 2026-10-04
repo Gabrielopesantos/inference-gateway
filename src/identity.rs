@@ -14,6 +14,7 @@ const SESSION_HEADER: &str = "x-gateway-session";
 /// Sent by Claude Code on every request; forwarded upstream unchanged.
 const CLAUDE_CODE_SESSION_HEADER: &str = "x-claude-code-session-id";
 const TAG_PREFIX: &str = "x-gateway-tag-";
+const CAPTURE_HEADER: &str = "x-gateway-capture";
 
 /// Generate with `openssl rand -hex 32`. Changing it changes every `caller_id`.
 #[derive(Clone)]
@@ -84,6 +85,16 @@ impl Principal {
             session_id,
             tags,
         }
+    }
+}
+
+/// `x-gateway-capture: 0|1`; other values are ignored.
+#[must_use]
+pub fn capture_header(headers: &HeaderMap) -> Option<bool> {
+    match headers.get(CAPTURE_HEADER)?.as_bytes() {
+        b"1" => Some(true),
+        b"0" => Some(false),
+        _ => None,
     }
 }
 
@@ -176,5 +187,18 @@ mod tests {
             Principal::from_headers(&h, None, Some(&secret("k"))).caller_id,
             None
         );
+    }
+
+    #[test]
+    fn capture_header_is_zero_or_one() {
+        let get = |v: &'static str| {
+            let mut h = HeaderMap::new();
+            h.insert("x-gateway-capture", HeaderValue::from_static(v));
+            capture_header(&h)
+        };
+        assert_eq!(get("1"), Some(true));
+        assert_eq!(get("0"), Some(false));
+        assert_eq!(get("yes"), None);
+        assert_eq!(capture_header(&HeaderMap::new()), None);
     }
 }
