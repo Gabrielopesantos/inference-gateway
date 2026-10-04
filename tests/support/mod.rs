@@ -133,9 +133,9 @@ pub async fn spawn_gateway_with(config: &str, opts: Options<'_>) -> TestGateway 
         .into_command()
         .unwrap();
     let config = Config::parse(config).unwrap();
-    let ctx = BuildCtx::default();
+    let mut ctx = BuildCtx::default();
     let (tx, records) = mpsc::unbounded_channel();
-    let mut mods = modules::build(&config, &ctx).unwrap();
+    let mut mods = modules::build(&config, &mut ctx).unwrap();
     mods.extend(opts.modules);
     mods.push(Box::new(Collector(tx)));
     let dispatcher = Dispatcher::start(

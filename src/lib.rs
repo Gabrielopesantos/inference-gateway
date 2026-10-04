@@ -12,3 +12,5 @@ pub mod providers;
 pub mod proxy;
 pub mod redact;
 pub mod server;
+#[cfg(feature = "store")]
+pub mod store;

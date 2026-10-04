@@ -43,9 +43,9 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         .iter()
         .map(|u| format!("{} -> {} ({})", u.name, u.base_url, u.provider))
         .collect();
-    let ctx = BuildCtx::default();
+    let mut ctx = BuildCtx::default();
     let dispatcher = Dispatcher::start(
-        modules::build(&config, &ctx)?,
+        modules::build(&config, &mut ctx)?,
         &ctx,
         Dispatcher::QUEUE_CAPACITY,
     );

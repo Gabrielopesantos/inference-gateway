@@ -3,3 +3,6 @@ target/
 result
 recorded/
 __pycache__/
+*.db
+*.db-wal
+*.db-shm

@@ -51,6 +51,9 @@ pub trait Module: Send + Sync {
 #[derive(Default)]
 pub struct BuildCtx {
     pub drops: Arc<DropCounters>,
+    /// Set by the `store` module.
+    #[cfg(feature = "store")]
+    pub store: Option<crate::store::Store>,
 }
 
 /// Records dropped per export module because its queue was full.
@@ -83,7 +86,7 @@ impl DropCounters {
 /// # Errors
 ///
 /// A module fails to build, or its section is present but its feature is off.
-pub fn build(cfg: &Config, ctx: &BuildCtx) -> Result<Vec<Box<dyn Module>>> {
+pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
     #[allow(unused_mut)] // with every feature off, nothing is pushed
     let mut modules: Vec<Box<dyn Module>> = vec![Box::new(access_log::AccessLog)];
     if let Some(c) = &cfg.cost {
@@ -104,7 +107,24 @@ pub fn build(cfg: &Config, ctx: &BuildCtx) -> Result<Vec<Box<dyn Module>>> {
             anyhow::bail!("[prometheus] needs cargo feature `prometheus`");
         }
     }
-    #[cfg(not(feature = "prometheus"))]
+    if let Some(c) = &cfg.store {
+        #[cfg(feature = "store")]
+        {
+            let retention = cfg
+                .capture
+                .as_ref()
+                .map_or(crate::config::DEFAULT_RETENTION, |p| p.retention);
+            let (module, store) = crate::store::StoreModule::start(c, retention)?;
+            ctx.store = Some(store);
+            modules.push(Box::new(module));
+        }
+        #[cfg(not(feature = "store"))]
+        {
+            let _ = c;
+            anyhow::bail!("[store] needs cargo feature `store`");
+        }
+    }
+    #[cfg(not(any(feature = "prometheus", feature = "store")))]
     let _ = ctx;
     Ok(modules)
 }
@@ -223,7 +243,7 @@ mod tests {
 
     #[test]
     fn access_log_is_always_on() {
-        let modules = build(&Config::parse(MINIMAL).unwrap(), &BuildCtx::default()).unwrap();
+        let modules = build(&Config::parse(MINIMAL).unwrap(), &mut BuildCtx::default()).unwrap();
         let names: Vec<_> = modules.iter().map(|m| m.name()).collect();
         assert_eq!(names, ["access_log"]);
     }
@@ -232,7 +252,7 @@ mod tests {
     #[test]
     fn prometheus_section_without_feature_fails() {
         let cfg = Config::parse(&format!("{MINIMAL}\n[prometheus]\n")).unwrap();
-        let err = build(&cfg, &BuildCtx::default()).err().unwrap();
+        let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
         assert_eq!(
             err.to_string(),
             "[prometheus] needs cargo feature `prometheus`"
@@ -244,7 +264,15 @@ mod tests {
     fn cost_section_without_feature_fails() {
         let cfg =
             Config::parse(&format!("{MINIMAL}\n[cost]\npricing_file = \"p.toml\"\n")).unwrap();
-        let err = build(&cfg, &BuildCtx::default()).err().unwrap();
+        let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
         assert_eq!(err.to_string(), "[cost] needs cargo feature `cost`");
+    }
+
+    #[cfg(not(feature = "store"))]
+    #[test]
+    fn store_section_without_feature_fails() {
+        let cfg = Config::parse(&format!("{MINIMAL}\n[store]\npath = \"g.db\"\n")).unwrap();
+        let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
+        assert_eq!(err.to_string(), "[store] needs cargo feature `store`");
     }
 }
