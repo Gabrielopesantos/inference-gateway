@@ -28,6 +28,8 @@ pub use crate::observe::record::{CapturedContent, CompletedExchange};
 pub enum Phase {
     Enrich,
     Export,
+    /// Runs its own tasks and sees no records; only `shutdown` is called.
+    Background,
 }
 
 /// Renders the admin `/metrics` body.
@@ -54,6 +56,16 @@ pub struct BuildCtx {
     /// Set by the `store` module.
     #[cfg(feature = "store")]
     pub store: Option<crate::store::Store>,
+    /// Set by the `store` module when `[eval]` is present; woken when the
+    /// writer enqueues eval jobs.
+    #[cfg(feature = "store")]
+    pub jobs_notify: Option<Arc<tokio::sync::Notify>>,
+    /// Set by the `prometheus` module, for other modules' metrics.
+    #[cfg(feature = "prometheus")]
+    pub registry: Option<::prometheus::Registry>,
+    /// Judge key; read from the env var named in `[eval.judge]` when unset.
+    #[cfg(feature = "eval")]
+    pub judge_key: Option<String>,
 }
 
 /// Records dropped per export module because its queue was full.
@@ -87,6 +99,11 @@ impl DropCounters {
 ///
 /// A module fails to build, or its section is present but its feature is off.
 pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
+    // Before the store starts its writer.
+    #[cfg(not(feature = "eval"))]
+    if cfg.eval.is_some() {
+        anyhow::bail!("[eval] needs cargo feature `eval`");
+    }
     #[allow(unused_mut)] // with every feature off, nothing is pushed
     let mut modules: Vec<Box<dyn Module>> = vec![Box::new(access_log::AccessLog)];
     if let Some(c) = &cfg.cost {
@@ -114,7 +131,14 @@ pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
                 .capture
                 .as_ref()
                 .map_or(crate::config::DEFAULT_RETENTION, |p| p.retention);
-            let (module, store) = crate::store::StoreModule::start(c, retention)?;
+            let mut jobs = crate::store::Jobs::default();
+            if let Some(e) = &cfg.eval {
+                let notify = Arc::new(tokio::sync::Notify::new());
+                jobs.evaluators = e.evaluators.clone().into();
+                jobs.notify = Some(notify.clone());
+                ctx.jobs_notify = Some(notify);
+            }
+            let (module, store) = crate::store::StoreModule::start(c, retention, jobs)?;
             ctx.store = Some(store);
             modules.push(Box::new(module));
         }
@@ -124,6 +148,10 @@ pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
             anyhow::bail!("[store] needs cargo feature `store`");
         }
     }
+    #[cfg(feature = "eval")]
+    if let Some(c) = &cfg.eval {
+        modules.push(Box::new(crate::eval::EvalModule::start(c, ctx)?));
+    }
     #[cfg(not(any(feature = "prometheus", feature = "store")))]
     let _ = ctx;
     Ok(modules)
@@ -132,6 +160,7 @@ pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
 pub struct Dispatcher {
     inner: Arc<Inner>,
     workers: Vec<JoinHandle<()>>,
+    background: Vec<Box<dyn Module>>,
     scrape: Option<Scrape>,
 }
 
@@ -157,9 +186,11 @@ impl Dispatcher {
         let mut enrich = Vec::new();
         let mut exports = Vec::new();
         let mut workers = Vec::new();
+        let mut background = Vec::new();
         for module in modules {
             match module.phase() {
                 Phase::Enrich => enrich.push(module),
+                Phase::Background => background.push(module),
                 Phase::Export => {
                     let name = module.name();
                     let (tx, mut rx) = mpsc::channel::<Arc<CompletedExchange>>(capacity);
@@ -183,6 +214,7 @@ impl Dispatcher {
                 exports: RwLock::new(exports),
             }),
             workers,
+            background,
             scrape,
         }
     }
@@ -198,7 +230,8 @@ impl Dispatcher {
         self.scrape.clone()
     }
 
-    /// Closes the queues, then waits up to `deadline` for workers to drain.
+    /// Closes the queues, then waits up to `deadline` for workers to drain
+    /// and background modules to stop.
     pub async fn shutdown(self, deadline: Duration) {
         drop(std::mem::take(
             &mut *self
@@ -207,11 +240,14 @@ impl Dispatcher {
                 .write()
                 .unwrap_or_else(PoisonError::into_inner),
         ));
-        if tokio::time::timeout(deadline, join_all(self.workers))
-            .await
-            .is_err()
+        let background = join_all(self.background.iter().map(|m| m.shutdown()));
+        if tokio::time::timeout(deadline, async {
+            tokio::join!(join_all(self.workers), background)
+        })
+        .await
+        .is_err()
         {
-            warn!(?deadline, "export modules did not drain in time");
+            warn!(?deadline, "modules did not shut down in time");
         }
     }
 }
@@ -274,5 +310,16 @@ mod tests {
         let cfg = Config::parse(&format!("{MINIMAL}\n[store]\npath = \"g.db\"\n")).unwrap();
         let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
         assert_eq!(err.to_string(), "[store] needs cargo feature `store`");
+    }
+
+    #[cfg(not(feature = "eval"))]
+    #[test]
+    fn eval_section_without_feature_fails() {
+        let cfg = Config::parse(&format!(
+            "{MINIMAL}\n[store]\npath = \"g.db\"\n\n[eval.judge]\nbase_url = \"https://j\"\nmodel = \"m\"\napi_key_env = \"K\"\n"
+        ))
+        .unwrap();
+        let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
+        assert_eq!(err.to_string(), "[eval] needs cargo feature `eval`");
     }
 }

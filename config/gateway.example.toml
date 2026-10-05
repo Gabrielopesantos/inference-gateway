@@ -66,3 +66,47 @@ allow_header_override = true
 [[capture.rules]]
 match = { model = "claude-haiku-*" }
 sample = 0.25         # deterministic per trace id
+
+# Scores captured traces with the Jev decision model, asynchronously. Needs
+# [store]; only captured traces with outcome ok are enqueued. Workers also run
+# standalone: `inference-gateway eval run --config <file>` on the same database.
+# [eval]
+# concurrency = 4       # jobs in flight = concurrent judge calls
+# max_attempts = 5      # 408/429/5xx/timeouts/invalid answers are retried
+# lease = "5m"          # a crashed worker's job is reclaimed after this
+# poll = "1s"
+#
+# [eval.judge]
+# base_url = "https://api.typesafe.ai"
+# model = "jev-1.13.0"            # pin: jev-latest moves between releases
+# api_key_env = "IG_JUDGE_API_KEY"
+# max_state_tokens = 32000        # Jev limit for state plus question
+#
+# One question per evaluator. Editing the model, state or question makes a new
+# evaluator version; `inference-gateway eval backfill --evaluator NAME` scores
+# old traces again under it.
+# [[eval.evaluators]]
+# name = "answered"
+# # stop_reason (evaluators only): raw provider values. Agent turns that call a
+# # tool end with tool_use and often carry no text; score answers on end_turn.
+# # structured_output = false (evaluators only) skips requests for JSON output,
+# # such as Claude Code's session-title call.
+# match = { upstream = "anthropic", tags = { project = "gateway-dev" }, stop_reason = ["end_turn"], structured_output = false }
+# sample = 1.0
+# min_confidence = 0.7            # dashboards and SQL only
+# # Variables: last_user_message, output_text, system, conversation,
+# # tool_calls, thinking, stop_reason.
+# state = """
+# <user>{{ last_user_message }}</user>
+# <response>{{ output_text }}</response>
+# """
+#
+# [eval.evaluators.question]
+# type = "choice"                 # noul (probability of yes) | choice | score
+# instructions = "Did the response address the request?"
+#
+# [eval.evaluators.question.criteria]
+# correct = "Fully answers what was asked"
+# partial = "Answers part of it"
+# wrong = "Answers, but incorrectly"
+# refused = ""                    # no description

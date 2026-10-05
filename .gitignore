@@ -6,5 +6,7 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+.env
 pricing-cache.json
 pricing-cache.tmp
+config/*.local.toml

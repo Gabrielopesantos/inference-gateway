@@ -40,8 +40,9 @@ impl Prometheus {
     /// # Errors
     ///
     /// Metric registration fails (duplicate or invalid name).
-    pub fn new(_cfg: &PrometheusFile, ctx: &BuildCtx) -> Result<Self> {
+    pub fn new(_cfg: &PrometheusFile, ctx: &mut BuildCtx) -> Result<Self> {
         let registry = Registry::new();
+        ctx.registry = Some(registry.clone());
         let counter = |name: &str, help: &str, labels: &[&str]| {
             register(
                 &registry,

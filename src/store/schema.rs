@@ -100,11 +100,14 @@ CREATE TABLE eval_jobs (
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
     attempts INTEGER NOT NULL DEFAULT 0,
     lease_until INTEGER,
-    not_before INTEGER,
+    not_before INTEGER NOT NULL,
     last_error TEXT,
     created_at INTEGER NOT NULL
 );
+-- One job per trace and evaluator version: re-enqueueing is a no-op.
+CREATE UNIQUE INDEX eval_jobs_once ON eval_jobs (trace_id, evaluator_version);
 CREATE INDEX eval_jobs_claim ON eval_jobs (status, not_before);
+CREATE INDEX eval_jobs_lease ON eval_jobs (status, lease_until);
 
 CREATE TABLE scores (
     id INTEGER PRIMARY KEY,
@@ -127,11 +130,16 @@ CREATE TABLE scores (
     created_at INTEGER NOT NULL
 );
 CREATE INDEX scores_trace ON scores (trace_id);
+CREATE INDEX scores_version ON scores (name, evaluator_version);
 ";
 
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The single write connection: creates the file and migrates it.
+///
+/// # Errors
+///
+/// File cannot be opened or migrated.
 pub fn open_writer(path: &Path) -> Result<Connection> {
     let mut conn =
         Connection::open(path).with_context(|| format!("opening store {}", path.display()))?;

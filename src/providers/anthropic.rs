@@ -700,6 +700,21 @@ mod tests {
         assert_eq!(RequestParts::default().last_user_text(), None);
     }
 
+    #[test]
+    fn structured_output_from_output_config() {
+        let split = |body: &str| split_request(body.as_bytes()).unwrap().params;
+        // Claude Code's session-title call.
+        assert!(crate::providers::structured_output(&split(
+            r#"{"messages":[],"output_config":{"effort":"medium","format":{"type":"json_schema","schema":{}}}}"#
+        )));
+        assert!(!crate::providers::structured_output(&split(
+            r#"{"messages":[],"output_config":{"effort":"high"}}"#
+        )));
+        assert!(!crate::providers::structured_output(&split(
+            r#"{"messages":[]}"#
+        )));
+    }
+
     fn fixture(name: &str) -> Vec<u8> {
         std::fs::read(format!(
             "{}/tests/fixtures/anthropic/{name}",

@@ -616,6 +616,20 @@ mod tests {
         assert_eq!(parts.params.keys().collect::<Vec<_>>(), ["model"]);
     }
 
+    #[test]
+    fn structured_output_from_response_format() {
+        let split = |body: &str| split_request(body.as_bytes()).unwrap().params;
+        assert!(crate::providers::structured_output(&split(
+            r#"{"messages":[],"response_format":{"type":"json_schema","json_schema":{}}}"#
+        )));
+        assert!(crate::providers::structured_output(&split(
+            r#"{"messages":[],"response_format":{"type":"json_object"}}"#
+        )));
+        assert!(!crate::providers::structured_output(&split(
+            r#"{"messages":[],"response_format":{"type":"text"}}"#
+        )));
+    }
+
     fn fixture(name: &str) -> Vec<u8> {
         std::fs::read(format!(
             "{}/tests/fixtures/openai/{name}",

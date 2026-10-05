@@ -6,12 +6,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use rusqlite::{Connection, Transaction, params};
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, warn};
 
 use super::{blobs, retention};
-use crate::observe::record::{CapturedContent, CompletedExchange, RequestRecord};
-use crate::providers::{Operation, RequestParts};
+use crate::capture::TraceFacts;
+use crate::config::eval::Evaluator;
+use crate::observe::record::{CapturedContent, CompletedExchange, Outcome, RequestRecord};
+use crate::providers::{Operation, RequestParts, structured_output};
 
 const MAX_BATCH: usize = 100;
 
@@ -21,8 +23,16 @@ pub enum Msg {
     Retain(Duration),
 }
 
+/// Who to tell about traces to score.
+#[derive(Default)]
+pub struct Jobs {
+    pub evaluators: Arc<[Evaluator]>,
+    /// Woken after a commit that enqueued eval jobs.
+    pub notify: Option<Arc<Notify>>,
+}
+
 /// Returns when every sender is dropped and the queue is empty.
-pub fn run(mut conn: Connection, mut rx: mpsc::Receiver<Msg>) {
+pub fn run(mut conn: Connection, mut rx: mpsc::Receiver<Msg>, jobs: &Jobs) {
     let mut batch = Vec::with_capacity(MAX_BATCH);
     while let Some(first) = rx.blocking_recv() {
         let mut next = Some(first);
@@ -30,7 +40,7 @@ pub fn run(mut conn: Connection, mut rx: mpsc::Receiver<Msg>) {
             match msg {
                 Msg::Exchange(ex) => batch.push(ex),
                 Msg::Retain(max_age) => {
-                    write_batch(&mut conn, &batch);
+                    write_batch(&mut conn, &batch, jobs);
                     batch.clear();
                     let cutoff =
                         unix_ms(SystemTime::now().checked_sub(max_age).unwrap_or(UNIX_EPOCH));
@@ -45,59 +55,123 @@ pub fn run(mut conn: Connection, mut rx: mpsc::Receiver<Msg>) {
                 None
             };
         }
-        write_batch(&mut conn, &batch);
+        write_batch(&mut conn, &batch, jobs);
         batch.clear();
     }
 }
 
-fn unix_ms(t: SystemTime) -> i64 {
+#[must_use]
+pub fn unix_ms(t: SystemTime) -> i64 {
     t.duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// A failed batch is retried one exchange per transaction, so one bad row
 /// loses only itself.
-fn write_batch(conn: &mut Connection, batch: &[Arc<CompletedExchange>]) {
+fn write_batch(conn: &mut Connection, batch: &[Arc<CompletedExchange>], jobs: &Jobs) {
     if batch.is_empty() {
         return;
     }
-    let Err(e) = try_write(conn, batch) else {
-        return;
-    };
-    if batch.len() == 1 {
-        error!(id = %batch[0].record.id, error = %format!("{e:#}"), "trace not stored");
-        return;
-    }
-    warn!(rows = batch.len(), error = %format!("{e:#}"), "store batch failed; retrying one by one");
-    for ex in batch {
-        if let Err(e) = try_write(conn, std::slice::from_ref(ex)) {
-            error!(id = %ex.record.id, error = %format!("{e:#}"), "trace not stored");
+    let enqueued = match try_write(conn, batch, &jobs.evaluators) {
+        Ok(n) => n,
+        Err(e) if batch.len() == 1 => {
+            error!(id = %batch[0].record.id, error = %format!("{e:#}"), "trace not stored");
+            0
         }
+        Err(e) => {
+            warn!(rows = batch.len(), error = %format!("{e:#}"), "store batch failed; retrying one by one");
+            batch
+                .iter()
+                .map(|ex| {
+                    try_write(conn, std::slice::from_ref(ex), &jobs.evaluators).unwrap_or_else(
+                        |e| {
+                            error!(id = %ex.record.id, error = %format!("{e:#}"), "trace not stored");
+                            0
+                        },
+                    )
+                })
+                .sum()
+        }
+    };
+    if enqueued > 0
+        && let Some(n) = &jobs.notify
+    {
+        n.notify_one();
     }
 }
 
-fn try_write(conn: &mut Connection, batch: &[Arc<CompletedExchange>]) -> Result<()> {
+/// Returns the number of eval jobs enqueued.
+fn try_write(
+    conn: &mut Connection,
+    batch: &[Arc<CompletedExchange>],
+    evaluators: &[Evaluator],
+) -> Result<usize> {
     let mut tx = conn.transaction()?;
+    let mut enqueued = 0;
     for ex in batch {
-        write_exchange(&mut tx, ex)?;
+        enqueued += write_exchange(&mut tx, ex, evaluators)?;
     }
     tx.commit()?;
-    Ok(())
+    Ok(enqueued)
 }
 
-/// Content errors roll back only the content; the trace row stays.
-fn write_exchange(tx: &mut Transaction, ex: &CompletedExchange) -> Result<()> {
-    insert_trace(tx, &ex.record, ex.content.is_some())?;
-    if let Some(content) = &ex.content {
-        let sp = tx.savepoint()?;
-        match write_content(&sp, &ex.record, content) {
-            Ok(()) => sp.commit()?,
-            Err(e) => {
-                warn!(id = %ex.record.id, error = %format!("{e:#}"), "content not stored; trace kept");
-            }
+/// Content errors roll back only the content; the trace row stays. Jobs
+/// are enqueued in the same transaction, only for stored content.
+fn write_exchange(
+    tx: &mut Transaction,
+    ex: &CompletedExchange,
+    evaluators: &[Evaluator],
+) -> Result<usize> {
+    let r = &ex.record;
+    insert_trace(tx, r, ex.content.is_some())?;
+    let Some(content) = &ex.content else {
+        return Ok(0);
+    };
+    let sp = tx.savepoint()?;
+    let structured_output = match write_content(&sp, r, content) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(id = %r.id, error = %format!("{e:#}"), "content not stored; trace kept");
+            return Ok(0);
+        }
+    };
+    sp.commit()?;
+    if r.outcome != Outcome::Ok {
+        return Ok(0);
+    }
+    let id = r.id.as_bytes();
+    let now = unix_ms(SystemTime::now());
+    let mut enqueued = 0;
+    for e in evaluators {
+        if e.matcher.matches(
+            &r.upstream,
+            r.model(),
+            &r.principal.tags,
+            Some(TraceFacts {
+                stop_reason: r.stop_reason.as_deref(),
+                structured_output,
+            }),
+        ) && e.sampled(id)
+        {
+            enqueued += enqueue(tx, id, e, now)?;
         }
     }
-    Ok(())
+    Ok(enqueued)
+}
+
+/// No-op when the trace already has a job for this evaluator version.
+///
+/// # Errors
+///
+/// Database error.
+pub fn enqueue(conn: &Connection, trace_id: &[u8], e: &Evaluator, now_ms: i64) -> Result<usize> {
+    Ok(conn
+        .prepare_cached(
+            "INSERT OR IGNORE INTO eval_jobs
+                (trace_id, evaluator, evaluator_version, status, not_before, created_at)
+             VALUES (?1, ?2, ?3, 'pending', ?4, ?4)",
+        )?
+        .execute(params![trace_id, e.name, e.version, now_ms])?)
 }
 
 const TRACE_COLUMNS: &[&str] = &[
@@ -205,17 +279,18 @@ fn insert_trace(conn: &Connection, r: &RequestRecord, captured: bool) -> Result<
 }
 
 /// A body the adapter cannot split or parse still gets an output row, so
-/// the raw response and truncation flag are kept.
-fn write_content(conn: &Connection, r: &RequestRecord, c: &CapturedContent) -> Result<()> {
+/// the raw response and truncation flag are kept. Returns whether the
+/// request asked for structured output.
+fn write_content(conn: &Connection, r: &RequestRecord, c: &CapturedContent) -> Result<bool> {
     let id = r.id.as_bytes().as_slice();
-    let last_user_text = match r.provider.split_request(&c.request_body) {
+    let (last_user_text, structured) = match r.provider.split_request(&c.request_body) {
         Ok(parts) => {
             write_inputs(conn, id, &parts)?;
-            parts.last_user_text()
+            (parts.last_user_text(), structured_output(&parts.params))
         }
         Err(e) => {
             debug!(id = %r.id, error = %e, "request body not split; inputs not stored");
-            None
+            (None, false)
         }
     };
     let (blob, output_text) = if c.raw_response.is_empty() {
@@ -235,7 +310,7 @@ fn write_content(conn: &Connection, r: &RequestRecord, c: &CapturedContent) -> R
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?
     .execute(params![id, blob, output_text, last_user_text, c.truncated])?;
-    Ok(())
+    Ok(structured)
 }
 
 fn write_inputs(conn: &Connection, id: &[u8], parts: &RequestParts) -> Result<()> {

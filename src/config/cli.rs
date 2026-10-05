@@ -3,7 +3,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use bytesize::ByteSize;
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -47,6 +47,56 @@ impl Cli {
 pub enum Command {
     /// Run the gateway (the default when no subcommand is given).
     Serve(ServeArgs),
+    /// Work the evaluation queue of a gateway's database.
+    #[command(subcommand)]
+    Eval(EvalCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvalCommand {
+    /// Run eval workers only, against the database in `[store]`.
+    Run(EvalRunArgs),
+    /// Enqueue jobs for already captured traces.
+    Backfill(BackfillArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct EvalRunArgs {
+    /// TOML file with `[store]` and `[eval]`.
+    #[arg(long, env = "IG_CONFIG")]
+    pub config: PathBuf,
+
+    /// Default `tracing` filter directive; `RUST_LOG` overrides it.
+    #[arg(long, env = "IG_LOG_LEVEL", default_value = "info")]
+    pub log_level: String,
+
+    /// Log line format.
+    #[arg(long, env = "IG_LOG_FORMAT", value_enum, default_value_t = LogFormat::Text)]
+    pub log_format: LogFormat,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct BackfillArgs {
+    /// TOML file with `[store]` and `[eval]`.
+    #[arg(long, env = "IG_CONFIG")]
+    pub config: PathBuf,
+
+    /// Evaluator name from `[[eval.evaluators]]`.
+    #[arg(long)]
+    pub evaluator: String,
+
+    /// Only traces started since then: a duration ago (`7d`) or an RFC 3339
+    /// time (`2026-10-01`, `2026-10-01T12:00:00Z`).
+    #[arg(long, value_parser = parse_since)]
+    pub since: Option<SystemTime>,
+
+    /// Ignore the evaluator's `sample` and enqueue every matching trace.
+    #[arg(long)]
+    pub all: bool,
+
+    /// Count, enqueue nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -108,6 +158,21 @@ fn parse_duration(s: &str) -> Result<Duration, humantime::DurationError> {
     humantime::parse_duration(s)
 }
 
+fn parse_since(s: &str) -> Result<SystemTime, String> {
+    if let Ok(ago) = humantime::parse_duration(s) {
+        return SystemTime::now()
+            .checked_sub(ago)
+            .ok_or_else(|| format!("{s:?} is before the epoch"));
+    }
+    let full = if s.len() == 10 {
+        format!("{s}T00:00:00Z")
+    } else {
+        s.to_owned()
+    };
+    humantime::parse_rfc3339_weak(&full)
+        .map_err(|_| format!("{s:?} is neither a duration (7d) nor an RFC 3339 time"))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
@@ -123,7 +188,9 @@ mod tests {
     #[test]
     fn defaults_parse() {
         let cli = Cli::try_parse_from(["ig", "--config", "gw.toml"]).unwrap();
-        let Command::Serve(args) = cli.into_command().unwrap();
+        let Command::Serve(args) = cli.into_command().unwrap() else {
+            panic!("not serve")
+        };
         assert_eq!(args.max_body, ByteSize::mib(32));
         assert_eq!(args.idle_timeout, Duration::from_mins(5));
         assert_eq!(args.log_format, LogFormat::Text);
@@ -134,7 +201,10 @@ mod tests {
         let Command::Serve(args) = Cli::try_parse_from(["ig", "--config", "gw.toml"])
             .unwrap()
             .into_command()
-            .unwrap();
+            .unwrap()
+        else {
+            panic!("not serve")
+        };
         assert_eq!(args.config, PathBuf::from("gw.toml"));
     }
 
@@ -149,7 +219,9 @@ mod tests {
             "2s",
         ])
         .unwrap();
-        let Command::Serve(args) = cli.into_command().unwrap();
+        let Command::Serve(args) = cli.into_command().unwrap() else {
+            panic!("not serve")
+        };
         assert_eq!(args.connect_timeout, Duration::from_secs(2));
     }
 
@@ -169,5 +241,44 @@ mod tests {
         assert!(parse(&["--tls-cert", "c.pem"]).is_err());
         assert!(parse(&["--tls-key", "k.pem"]).is_err());
         assert!(parse(&["--tls-cert", "c.pem", "--tls-key", "k.pem"]).is_ok());
+    }
+
+    #[test]
+    fn eval_subcommands_parse() {
+        let cli = Cli::try_parse_from(["ig", "eval", "run", "--config", "gw.toml"]).unwrap();
+        assert!(matches!(
+            cli.into_command().unwrap(),
+            Command::Eval(EvalCommand::Run(_))
+        ));
+        let cli = Cli::try_parse_from([
+            "ig",
+            "eval",
+            "backfill",
+            "--config",
+            "gw.toml",
+            "--evaluator",
+            "answered",
+            "--since",
+            "2026-10-01",
+            "--dry-run",
+        ])
+        .unwrap();
+        let Command::Eval(EvalCommand::Backfill(b)) = cli.into_command().unwrap() else {
+            panic!("not backfill")
+        };
+        assert_eq!(b.evaluator, "answered");
+        assert!(b.dry_run && !b.all);
+        assert_eq!(
+            b.since.unwrap(),
+            humantime::parse_rfc3339("2026-10-01T00:00:00Z").unwrap()
+        );
+    }
+
+    #[test]
+    fn since_takes_a_duration_ago() {
+        let t = parse_since("1h").unwrap();
+        let ago = SystemTime::now().duration_since(t).unwrap();
+        assert!((Duration::from_mins(59)..Duration::from_mins(61)).contains(&ago));
+        assert!(parse_since("yesterday").is_err());
     }
 }

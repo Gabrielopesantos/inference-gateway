@@ -83,7 +83,10 @@ async fn require_token_without_env_fails_at_startup() {
     let Command::Serve(args) = Cli::try_parse_from(["ig", "--config", "x.toml"])
         .unwrap()
         .into_command()
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("not serve")
+    };
     let dispatcher = Dispatcher::start(Vec::new(), &BuildCtx::default(), 1);
     for token in [None, Some(String::new())] {
         let secrets = Secrets {

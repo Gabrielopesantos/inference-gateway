@@ -141,6 +141,23 @@ pub struct RequestParts {
     pub params: Map<String, Value>,
 }
 
+/// Whether request `params` ask for JSON output: Anthropic `output_config.format`
+/// (or the older `output_format`), or `OpenAI` `response_format`.
+#[must_use]
+pub fn structured_output(params: &Map<String, Value>) -> bool {
+    const TYPES: [&[&str]; 3] = [
+        &["output_config", "format", "type"],
+        &["output_format", "type"],
+        &["response_format", "type"],
+    ];
+    TYPES.iter().any(|path| {
+        path.split_first()
+            .and_then(|(first, rest)| rest.iter().try_fold(params.get(*first)?, |v, k| v.get(k)))
+            .and_then(Value::as_str)
+            .is_some_and(|t| matches!(t, "json_schema" | "json_object"))
+    })
+}
+
 impl RequestParts {
     /// Text of the last user message that has any, so tool results are skipped.
     #[must_use]

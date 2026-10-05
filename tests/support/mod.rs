@@ -103,6 +103,8 @@ pub struct Options<'a> {
     pub modules: Vec<Box<dyn Module>>,
     /// Export queue capacity; default [`Dispatcher::QUEUE_CAPACITY`].
     pub capacity: Option<usize>,
+    /// Judge key, instead of the env var named in `[eval.judge]`.
+    pub judge_key: Option<String>,
 }
 
 /// Start a gateway on ephemeral ports from config text and extra CLI flags.
@@ -131,9 +133,16 @@ pub async fn spawn_gateway_with(config: &str, opts: Options<'_>) -> TestGateway 
     let Command::Serve(args) = Cli::try_parse_from(cli_args)
         .unwrap()
         .into_command()
-        .unwrap();
+        .unwrap()
+    else {
+        panic!("not serve")
+    };
     let config = Config::parse(config).unwrap();
     let mut ctx = BuildCtx::default();
+    #[cfg(feature = "eval")]
+    {
+        ctx.judge_key = opts.judge_key;
+    }
     let (tx, records) = mpsc::unbounded_channel();
     let mut mods = modules::build(&config, &mut ctx).unwrap();
     mods.extend(opts.modules);

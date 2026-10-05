@@ -9,6 +9,8 @@ mod schema;
 mod writer;
 
 pub use self::reader::TraceContent;
+pub use self::schema::{open_reader, open_writer};
+pub use self::writer::{Jobs, enqueue, unix_ms};
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -36,11 +38,29 @@ pub struct Store {
 }
 
 impl Store {
+    /// For processes without the `store` module: creates and migrates the
+    /// database if needed.
+    ///
+    /// # Errors
+    ///
+    /// Database cannot be opened or migrated.
+    pub fn open(path: &std::path::Path) -> Result<Self> {
+        drop(schema::open_writer(path)?);
+        Ok(Self {
+            path: path.to_owned(),
+        })
+    }
+
     /// # Errors
     ///
     /// Database missing or unreadable.
     pub fn reader(&self) -> Result<Connection> {
         schema::open_reader(&self.path)
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 }
 
@@ -59,12 +79,12 @@ impl StoreModule {
     /// # Errors
     ///
     /// Database cannot be opened or migrated, or the thread fails to spawn.
-    pub fn start(cfg: &StoreFile, retention: Duration) -> Result<(Self, Store)> {
+    pub fn start(cfg: &StoreFile, retention: Duration, jobs: Jobs) -> Result<(Self, Store)> {
         let conn = schema::open_writer(&cfg.path)?;
         let (tx, rx) = mpsc::channel(CHANNEL_CAPACITY);
         let writer = std::thread::Builder::new()
             .name("store-writer".into())
-            .spawn(move || writer::run(conn, rx))
+            .spawn(move || writer::run(conn, rx, &jobs))
             .context("spawning store writer")?;
         let timer = tokio::spawn(retention::run(tx.clone(), retention));
         let module = Self {

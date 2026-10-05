@@ -2,6 +2,7 @@
 //! [`Config`], the only form code past startup sees.
 
 pub mod cli;
+pub mod eval;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -28,6 +29,7 @@ pub struct FileConfig {
     pub prometheus: Option<PrometheusFile>,
     pub store: Option<StoreFile>,
     pub capture: Option<CaptureFile>,
+    pub eval: Option<eval::EvalFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,6 +110,11 @@ pub struct RuleFile {
 pub struct MatchFile {
     pub upstream: Option<String>,
     pub model: Option<String>,
+    /// Evaluators only, e.g. `["end_turn"]`.
+    #[serde(default)]
+    pub stop_reason: Vec<String>,
+    /// Evaluators only: `false` skips requests for JSON output.
+    pub structured_output: Option<bool>,
     #[serde(default)]
     pub tags: BTreeMap<String, String>,
 }
@@ -128,7 +135,7 @@ fn default_true() -> bool {
     true
 }
 
-fn default_sample() -> f64 {
+pub(crate) fn default_sample() -> f64 {
     1.0
 }
 
@@ -142,6 +149,7 @@ pub struct Config {
     pub prometheus: Option<PrometheusFile>,
     pub store: Option<StoreFile>,
     pub capture: Option<capture::Policy>,
+    pub eval: Option<eval::EvalConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +240,14 @@ impl TryFrom<FileConfig> for Config {
             .map(|c| capture_policy(c, &upstreams))
             .transpose()?;
 
+        if file.eval.is_some() && file.store.is_none() {
+            bail!("[eval] needs a [store] section");
+        }
+        let eval = file
+            .eval
+            .map(|e| eval::eval_config(e, &upstreams))
+            .transpose()?;
+
         Ok(Self {
             upstreams,
             ingress: file.ingress,
@@ -239,6 +255,7 @@ impl TryFrom<FileConfig> for Config {
             prometheus: file.prometheus,
             store: file.store,
             capture,
+            eval,
         })
     }
 }
@@ -283,7 +300,25 @@ fn capture_policy(file: CaptureFile, upstreams: &[Upstream]) -> Result<capture::
 }
 
 fn capture_rule(r: RuleFile, upstreams: &[Upstream]) -> Result<capture::Rule> {
-    let m = r.matcher;
+    if !r.matcher.stop_reason.is_empty() {
+        bail!("match.stop_reason is not known when capture is decided");
+    }
+    if r.matcher.structured_output.is_some() {
+        bail!("match.structured_output is for evaluators only");
+    }
+    let matcher = parse_match(r.matcher, upstreams)?;
+    if !(0.0..=1.0).contains(&r.sample) {
+        bail!("sample must be in [0, 1], got {}", r.sample);
+    }
+    Ok(capture::Rule {
+        matcher,
+        capture: r.capture,
+        sample: r.sample,
+        allow_header_override: r.allow_header_override,
+    })
+}
+
+fn parse_match(m: MatchFile, upstreams: &[Upstream]) -> Result<capture::Match> {
     if let Some(u) = &m.upstream
         && !upstreams.iter().any(|x| &x.name == u)
     {
@@ -294,10 +329,7 @@ fn capture_rule(r: RuleFile, upstreams: &[Upstream]) -> Result<capture::Rule> {
         .map(|g| Glob::new(&g).map(|g| g.compile_matcher()))
         .transpose()
         .context("match.model")?;
-    if !(0.0..=1.0).contains(&r.sample) {
-        bail!("sample must be in [0, 1], got {}", r.sample);
-    }
-    Ok(capture::Rule {
+    Ok(capture::Match {
         upstream: m.upstream,
         model,
         // Tag keys come from header names, which are lowercase.
@@ -306,9 +338,8 @@ fn capture_rule(r: RuleFile, upstreams: &[Upstream]) -> Result<capture::Rule> {
             .into_iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v))
             .collect(),
-        capture: r.capture,
-        sample: r.sample,
-        allow_header_override: r.allow_header_override,
+        stop_reasons: m.stop_reason,
+        structured_output: m.structured_output,
     })
 }
 
@@ -550,10 +581,11 @@ inject_stream_usage = false
         assert_eq!(p.retention, Duration::from_hours(30 * 24));
         assert_eq!(p.rules.len(), 2);
         assert!(p.rules[0].allow_header_override);
-        assert_eq!(p.rules[0].tags["project"], "gateway-dev");
+        assert_eq!(p.rules[0].matcher.tags["project"], "gateway-dev");
         assert!((p.rules[1].sample - 0.25).abs() < f64::EPSILON);
         assert!(
             p.rules[1]
+                .matcher
                 .model
                 .as_ref()
                 .unwrap()
@@ -568,7 +600,7 @@ inject_stream_usage = false
         assert_eq!(p.max_bytes, 1024);
         assert_eq!(p.retention, Duration::from_hours(2));
         assert!(p.rules[0].capture);
-        assert!(p.rules[0].tags.contains_key("project"));
+        assert!(p.rules[0].matcher.tags.contains_key("project"));
     }
 
     #[test]
@@ -591,6 +623,16 @@ inject_stream_usage = false
         assert!(e.contains("capture.rules[1]: match.model"), "{e}");
         let e = rule("sample = 1.5");
         assert!(e.contains("capture.rules[1]: sample"), "{e}");
+        let e = rule("match = { stop_reason = [\"end_turn\"] }");
+        assert!(
+            e.contains("capture.rules[1]: match.stop_reason is not known"),
+            "{e}"
+        );
+        let e = rule("match = { structured_output = false }");
+        assert!(
+            e.contains("capture.rules[1]: match.structured_output is for evaluators only"),
+            "{e}"
+        );
     }
 
     #[test]

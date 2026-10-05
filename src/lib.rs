@@ -3,6 +3,8 @@
 pub mod capture;
 pub mod config;
 pub mod error;
+#[cfg(feature = "eval")]
+pub mod eval;
 pub mod gateway;
 pub mod identity;
 pub mod ingress;

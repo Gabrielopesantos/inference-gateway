@@ -17,33 +17,63 @@ pub struct Policy {
     pub rules: Vec<Rule>,
 }
 
-#[derive(Debug, Clone)]
-pub struct Rule {
+/// Which requests a capture rule or an evaluator applies to; an absent key
+/// matches anything.
+#[derive(Debug, Clone, Default)]
+pub struct Match {
     pub upstream: Option<String>,
     pub model: Option<GlobMatcher>,
     /// Every pair must be present on the request.
     pub tags: BTreeMap<String, String>,
-    pub capture: bool,
-    /// Fraction of matching requests captured, in `[0, 1]`.
-    pub sample: f64,
-    /// Lets `x-gateway-capture: 0|1` override `capture` and `sample`.
-    pub allow_header_override: bool,
+    /// Raw provider values; empty matches any. Evaluators only, like
+    /// `structured_output`: capture is decided before the trace is stored.
+    pub stop_reasons: Vec<String>,
+    pub structured_output: Option<bool>,
 }
 
-impl Rule {
-    fn matches(
+/// What evaluators match on beyond the request line; unknown when capture
+/// is decided.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TraceFacts<'a> {
+    pub stop_reason: Option<&'a str>,
+    /// The request asked for JSON output, e.g. Claude Code's title call.
+    pub structured_output: bool,
+}
+
+impl Match {
+    /// Without `facts`, a matcher with `stop_reasons` or `structured_output`
+    /// never matches.
+    #[must_use]
+    pub fn matches(
         &self,
         upstream: &str,
         model: Option<&str>,
         tags: &BTreeMap<String, String>,
+        facts: Option<TraceFacts>,
     ) -> bool {
+        let stop_reason = facts.and_then(|f| f.stop_reason);
         self.upstream.as_deref().is_none_or(|u| u == upstream)
             && self
                 .model
                 .as_ref()
                 .is_none_or(|g| model.is_some_and(|m| g.is_match(m)))
             && self.tags.iter().all(|(k, v)| tags.get(k) == Some(v))
+            && (self.stop_reasons.is_empty()
+                || stop_reason.is_some_and(|s| self.stop_reasons.iter().any(|r| r == s)))
+            && self
+                .structured_output
+                .is_none_or(|want| facts.is_some_and(|f| f.structured_output == want))
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Rule {
+    pub matcher: Match,
+    pub capture: bool,
+    /// Fraction of matching requests captured, in `[0, 1]`.
+    pub sample: f64,
+    /// Lets `x-gateway-capture: 0|1` override `capture` and `sample`.
+    pub allow_header_override: bool,
 }
 
 impl Policy {
@@ -57,7 +87,11 @@ impl Policy {
         header: Option<bool>,
         trace_id: Uuid,
     ) -> bool {
-        let Some(rule) = self.rules.iter().find(|r| r.matches(upstream, model, tags)) else {
+        let Some(rule) = self
+            .rules
+            .iter()
+            .find(|r| r.matcher.matches(upstream, model, tags, None))
+        else {
             return false;
         };
         if rule.allow_header_override
@@ -65,16 +99,17 @@ impl Policy {
         {
             return h;
         }
-        rule.capture && sampled(trace_id, rule.sample)
+        rule.capture && sampled(trace_id.as_bytes(), rule.sample)
     }
 }
 
-/// Deterministic per trace. Hashed because `UUIDv7` bits are time-ordered.
-fn sampled(trace_id: Uuid, rate: f64) -> bool {
+/// Deterministic per key. Hashed because `UUIDv7` bits are time-ordered.
+#[must_use]
+pub fn sampled(key: &[u8], rate: f64) -> bool {
     if rate >= 1.0 {
         return true;
     }
-    let digest = Sha256::digest(trace_id.as_bytes());
+    let digest = Sha256::digest(key);
     let mut head = [0; 8];
     head.copy_from_slice(&digest[..8]);
     #[allow(clippy::cast_precision_loss)]
@@ -89,9 +124,7 @@ mod tests {
 
     fn rule() -> Rule {
         Rule {
-            upstream: None,
-            model: None,
-            tags: BTreeMap::new(),
+            matcher: Match::default(),
             capture: true,
             sample: 1.0,
             allow_header_override: false,
@@ -127,7 +160,10 @@ mod tests {
     fn first_match_wins() {
         let p = policy(vec![
             Rule {
-                model: Some(glob("claude-haiku-*")),
+                matcher: Match {
+                    model: Some(glob("claude-haiku-*")),
+                    ..Match::default()
+                },
                 capture: false,
                 ..rule()
             },
@@ -144,8 +180,11 @@ mod tests {
     #[test]
     fn upstream_and_tags_must_all_match() {
         let p = policy(vec![Rule {
-            upstream: Some("anthropic".into()),
-            tags: tags(&[("project", "gw"), ("env", "dev")]),
+            matcher: Match {
+                upstream: Some("anthropic".into()),
+                tags: tags(&[("project", "gw"), ("env", "dev")]),
+                ..Match::default()
+            },
             ..rule()
         }]);
         let id = Uuid::now_v7();
@@ -214,9 +253,49 @@ mod tests {
     }
 
     #[test]
+    fn stop_reason_needs_one_of_the_listed() {
+        let m = Match {
+            stop_reasons: vec!["end_turn".into(), "stop".into()],
+            ..Match::default()
+        };
+        let none = tags(&[]);
+        let stop = |s| {
+            Some(TraceFacts {
+                stop_reason: s,
+                ..TraceFacts::default()
+            })
+        };
+        assert!(m.matches("a", None, &none, stop(Some("end_turn"))));
+        assert!(m.matches("a", None, &none, stop(Some("stop"))));
+        assert!(!m.matches("a", None, &none, stop(Some("tool_use"))));
+        assert!(!m.matches("a", None, &none, stop(None)));
+        assert!(!m.matches("a", None, &none, None));
+        assert!(Match::default().matches("a", None, &none, None));
+    }
+
+    #[test]
+    fn structured_output_must_equal_when_set() {
+        let none = tags(&[]);
+        let facts = |structured_output| {
+            Some(TraceFacts {
+                structured_output,
+                ..TraceFacts::default()
+            })
+        };
+        let plain = Match {
+            structured_output: Some(false),
+            ..Match::default()
+        };
+        assert!(plain.matches("a", None, &none, facts(false)));
+        assert!(!plain.matches("a", None, &none, facts(true)));
+        assert!(!plain.matches("a", None, &none, None));
+        assert!(Match::default().matches("a", None, &none, facts(true)));
+    }
+
+    #[test]
     fn sample_bounds() {
         let id = Uuid::now_v7();
-        assert!(!sampled(id, 0.0));
-        assert!(sampled(id, 1.0));
+        assert!(!sampled(id.as_bytes(), 0.0));
+        assert!(sampled(id.as_bytes(), 1.0));
     }
 }
