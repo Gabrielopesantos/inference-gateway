@@ -1,0 +1,954 @@
+{
+  "uid": "quality",
+  "title": "Quality",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "tags": [
+    "inference-gateway"
+  ],
+  "links": [
+    {
+      "title": "Gateway",
+      "type": "link",
+      "url": "/d/gateway",
+      "keepTime": true,
+      "includeVars": false,
+      "icon": "dashboard"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "evaluator",
+        "label": "evaluator",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "gateway-sqlite"
+        },
+        "query": "SELECT DISTINCT name FROM scores ORDER BY 1",
+        "definition": "SELECT DISTINCT name FROM scores ORDER BY 1",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "version",
+        "label": "evaluator version",
+        "type": "query",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "gateway-sqlite"
+        },
+        "query": "SELECT DISTINCT evaluator_version FROM scores WHERE name IN (${evaluator:singlequote}) ORDER BY 1",
+        "definition": "SELECT DISTINCT evaluator_version FROM scores WHERE name IN (${evaluator:singlequote}) ORDER BY 1",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "sort": 1,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "bad_labels",
+        "label": "bad labels (comma-separated)",
+        "type": "textbox",
+        "query": "wrong,refused",
+        "current": {
+          "text": "wrong,refused",
+          "value": "wrong,refused"
+        }
+      },
+      {
+        "name": "min_confidence",
+        "label": "min confidence",
+        "type": "textbox",
+        "query": "0.7",
+        "current": {
+          "text": "0.7",
+          "value": "0.7"
+        }
+      },
+      {
+        "name": "low_score",
+        "label": "low score below",
+        "type": "textbox",
+        "query": "1",
+        "current": {
+          "text": "1",
+          "value": "1"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 1
+    },
+    {
+      "type": "stat",
+      "title": "Scores",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT count(*) AS scores FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT count(*) AS scores FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Low score or confidence",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence) THEN 1.0 ELSE 0.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence) THEN 1.0 ELSE 0.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "id": 3
+    },
+    {
+      "type": "stat",
+      "title": "Truncated judge inputs",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "id": 4
+    },
+    {
+      "type": "stat",
+      "title": "Judge cost",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT sum(s.judge_cost_usd) AS cost FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT sum(s.judge_cost_usd) AS cost FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 1,
+        "w": 6,
+        "h": 4
+      },
+      "id": 5
+    },
+    {
+      "type": "row",
+      "title": "Scores",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 6
+    },
+    {
+      "type": "timeseries",
+      "title": "Labels over time by model and evaluator version",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "showPoints": "always",
+            "stacking": {
+              "mode": "normal"
+            },
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "barAlignment": 0
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) || ' \u00b7 ' || coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS series,\n       count(*) AS scores\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) || ' \u00b7 ' || coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS series,\n       count(*) AS scores\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "choice and noul answers: count per label",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 12,
+        "h": 9
+      },
+      "id": 7
+    },
+    {
+      "type": "timeseries",
+      "title": "Mean value by model and evaluator version",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "showPoints": "always"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.value_num IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.value_num IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "noul: probability of yes; score: probability-weighted level index",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 9
+      },
+      "id": 8
+    },
+    {
+      "type": "table",
+      "title": "Distribution by model and evaluator version",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "share"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
+          "queryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 9
+      },
+      "id": 9
+    },
+    {
+      "type": "histogram",
+      "title": "Confidence",
+      "description": "choice and score answers; noul has none",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT s.confidence FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
+          "queryText": "SELECT s.confidence FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "bucketSize": 0.05,
+        "legend": {
+          "showLegend": false
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 9
+      },
+      "id": 10
+    },
+    {
+      "type": "row",
+      "title": "Judge",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 11
+    },
+    {
+      "type": "bargauge",
+      "title": "Eval jobs by status",
+      "description": "jobs created in the time range",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT sum(status = 'pending') AS pending, sum(status = 'running') AS running, sum(status = 'done') AS done, sum(status = 'failed') AS failed FROM eval_jobs WHERE created_at >= $__from AND created_at < $__to AND evaluator IN (${evaluator:singlequote})",
+          "queryText": "SELECT sum(status = 'pending') AS pending, sum(status = 'running') AS running, sum(status = 'done') AS done, sum(status = 'failed') AS failed FROM eval_jobs WHERE created_at >= $__from AND created_at < $__to AND evaluator IN (${evaluator:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 25,
+        "w": 8,
+        "h": 8
+      },
+      "id": 12
+    },
+    {
+      "type": "table",
+      "title": "Judge by model",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean_latency_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_latency_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
+          "queryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 25,
+        "w": 16,
+        "h": 8
+      },
+      "id": 13
+    },
+    {
+      "type": "timeseries",
+      "title": "Judge cost / hour",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "showPoints": "always",
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "barAlignment": 0
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "id": 14
+    },
+    {
+      "type": "timeseries",
+      "title": "Judge latency p50 / p95",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, model) (rate(gateway_eval_judge_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p50 {{model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, model) (rate(gateway_eval_judge_duration_seconds_bucket[$__rate_interval])))",
+          "legendFormat": "p95 {{model}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "in-process worker only; `eval run` exports no metrics",
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      },
+      "id": 15
+    },
+    {
+      "type": "table",
+      "title": "Failed jobs",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last_error"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open trace in Tempo",
+                    "url": "/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22${__value.raw}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT j.created_at / 1000.0 AS time,\n       j.evaluator,\n       substr(j.evaluator_version, 1, 8) AS version,\n       j.attempts,\n       j.last_error,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM eval_jobs j JOIN traces t ON t.id = j.trace_id\nWHERE j.status = 'failed' AND j.created_at >= $__from AND j.created_at < $__to AND j.evaluator IN (${evaluator:singlequote})\nORDER BY j.created_at DESC\nLIMIT 50",
+          "queryText": "SELECT j.created_at / 1000.0 AS time,\n       j.evaluator,\n       substr(j.evaluator_version, 1, 8) AS version,\n       j.attempts,\n       j.last_error,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM eval_jobs j JOIN traces t ON t.id = j.trace_id\nWHERE j.status = 'failed' AND j.created_at >= $__from AND j.created_at < $__to AND j.evaluator IN (${evaluator:singlequote})\nORDER BY j.created_at DESC\nLIMIT 50",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 8
+      },
+      "id": 16
+    },
+    {
+      "type": "row",
+      "title": "Review",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [],
+      "id": 17
+    },
+    {
+      "type": "table",
+      "title": "Low score or low confidence",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "last_user_message"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 420
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "auto",
+                  "wrapText": true
+                }
+              },
+              {
+                "id": "custom.width",
+                "value": 420
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open trace in Tempo",
+                    "url": "/explore?left=%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22refId%22%3A%22A%22%2C%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22queryType%22%3A%22traceql%22%2C%22query%22%3A%22${__value.raw}%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-24h%22%2C%22to%22%3A%22now%22%7D%7D"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM scores s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence)\nORDER BY s.created_at DESC\nLIMIT 50",
+          "queryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM scores s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence)\nORDER BY s.created_at DESC\nLIMIT 50",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "description": "bad: noul false, a label in bad_labels, a score below low_score, or confidence below min_confidence. Content expires with capture retention.",
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 24,
+        "h": 14
+      },
+      "id": 18
+    }
+  ]
+}

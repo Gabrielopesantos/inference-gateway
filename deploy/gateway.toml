@@ -61,3 +61,15 @@ allow_header_override = true
 # partial = "Answers part of it"
 # wrong = "Answers, but incorrectly"
 # refused = ""
+#
+# [[eval.evaluators]]
+# name = "helpful"
+# match = { stop_reason = ["end_turn"], structured_output = false }
+# state = """
+# <user>{{ last_user_message }}</user>
+# <response>{{ output_text }}</response>
+# """
+#
+# [eval.evaluators.question]
+# type = "noul"
+# instructions = "Is the response helpful to the user?"
