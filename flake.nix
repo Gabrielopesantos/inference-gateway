@@ -20,6 +20,54 @@
         );
     in
     {
+      packages = forEachSupportedSystem (
+        { pkgs, ... }:
+        let
+          cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
+          gateway = pkgs.rustPlatform.buildRustPackage {
+            pname = cargoToml.package.name;
+            version = cargoToml.package.version;
+            src = ./.;
+            cargoLock.lockFile = ./Cargo.lock;
+            # Integration tests bind sockets, which the build sandbox forbids.
+            doCheck = false;
+            meta.mainProgram = "inference-gateway";
+          };
+        in
+        {
+          default = gateway;
+          # nix build .#image && docker load < result
+          image = pkgs.dockerTools.buildLayeredImage {
+            name = "inference-gateway";
+            tag = "dev";
+            contents = [ pkgs.cacert ];
+            # Writable store directory for the unprivileged user.
+            fakeRootCommands = ''
+              mkdir -p ./data ./tmp
+              chown 65534:65534 ./data
+              chmod 1777 ./tmp
+            '';
+            config = {
+              Entrypoint = [ (pkgs.lib.getExe gateway) ];
+              User = "65534:65534";
+              WorkingDir = "/data";
+              Env = [
+                "IG_LISTEN=0.0.0.0:8080"
+                "IG_ADMIN_LISTEN=0.0.0.0:9090"
+                "IG_CONFIG=/etc/inference-gateway/gateway.toml"
+                "IG_LOG_FORMAT=json"
+                "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+              ];
+              ExposedPorts = {
+                "8080/tcp" = { };
+                "9090/tcp" = { };
+              };
+              Volumes."/data" = { };
+            };
+          };
+        }
+      );
+
       devShells = forEachSupportedSystem (
         { pkgs, ... }:
         {
