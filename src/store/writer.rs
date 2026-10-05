@@ -215,6 +215,7 @@ const TRACE_COLUMNS: &[&str] = &[
     "window_7d_utilization",
     "cost_usd",
     "captured",
+    "otel_trace_id",
 ];
 
 static INSERT_TRACE: LazyLock<String> = LazyLock::new(|| {
@@ -274,6 +275,7 @@ fn insert_trace(conn: &Connection, r: &RequestRecord, captured: bool) -> Result<
         rl.window_7d_utilization,
         r.cost_usd,
         captured,
+        r.trace_parent.map(|p| p.trace_id.to_vec()),
     ])?;
     Ok(())
 }

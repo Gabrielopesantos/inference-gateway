@@ -8,6 +8,7 @@ use uuid::Uuid;
 use super::timings::Timings;
 use crate::identity::Principal;
 use crate::providers::{Operation, ProviderKind, RateLimitSnapshot, Usage};
+use crate::trace_context::TraceParent;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -45,6 +46,8 @@ pub struct RequestRecord {
     pub response_model: Option<String>,
     pub streaming: bool,
     pub principal: Principal,
+    /// Client's W3C `traceparent`, if valid.
+    pub trace_parent: Option<TraceParent>,
     /// Status sent to the client; `None` if cancelled before upstream answered.
     pub http_status: Option<u16>,
     pub outcome: Outcome,
@@ -64,6 +67,21 @@ impl RequestRecord {
         self.response_model
             .as_deref()
             .or(self.requested_model.as_deref())
+    }
+
+    /// The caller's trace when it sent a `traceparent`, else the record id.
+    #[must_use]
+    pub fn otel_trace_id(&self) -> [u8; 16] {
+        self.trace_parent
+            .map_or(*self.id.as_bytes(), |p| p.trace_id)
+    }
+
+    /// The random tail of the `UUIDv7`, so the span id is stable per record.
+    #[must_use]
+    pub fn otel_span_id(&self) -> [u8; 8] {
+        let mut span = [0; 8];
+        span.copy_from_slice(&self.id.as_bytes()[8..]);
+        span
     }
 }
 

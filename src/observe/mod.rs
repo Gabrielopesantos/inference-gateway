@@ -25,6 +25,7 @@ use crate::identity::Principal;
 use crate::providers::{
     Operation, ProviderAdapter, RateLimitSnapshot, RequestInfo, StreamEvent, StreamParser, Usage,
 };
+use crate::trace_context::TraceParent;
 
 /// Receives each finished exchange. Called on the proxy path, so it must not block.
 pub type RecordSink = Arc<dyn Fn(CompletedExchange) + Send + Sync>;
@@ -67,6 +68,7 @@ pub struct Observation {
     finished: bool,
 
     principal: Principal,
+    trace_parent: Option<TraceParent>,
     method: Method,
     path: String,
     operation: Option<Operation>,
@@ -106,6 +108,7 @@ impl Observation {
             sink,
             finished: false,
             principal: Principal::default(),
+            trace_parent: None,
             method: Method::GET,
             path: String::new(),
             operation: None,
@@ -153,6 +156,10 @@ impl Observation {
 
     pub fn principal(&mut self, principal: Principal) {
         self.principal = principal;
+    }
+
+    pub fn trace_parent(&mut self, parent: Option<TraceParent>) {
+        self.trace_parent = parent;
     }
 
     pub fn request(&mut self, operation: Operation, info: RequestInfo) {
@@ -330,6 +337,7 @@ impl Observation {
             response_model: self.response_model.take(),
             streaming: self.streaming.unwrap_or(self.request.stream),
             principal: std::mem::take(&mut self.principal),
+            trace_parent: self.trace_parent,
             http_status: self.status.map(|s| s.as_u16()),
             outcome,
             error_type,

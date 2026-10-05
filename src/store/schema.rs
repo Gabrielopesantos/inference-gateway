@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 
 /// Applied in order; entry `n` moves `user_version` from `n` to `n + 1`.
 /// Never edit a released entry: append a new one.
-const MIGRATIONS: &[&str] = &[V1];
+const MIGRATIONS: &[&str] = &[V1, V2];
 
 /// Times are unix milliseconds (INTEGER) and durations milliseconds (REAL).
 /// Ids and hashes are raw bytes: `hex(id)` in SQL for display.
@@ -133,6 +133,9 @@ CREATE INDEX scores_trace ON scores (trace_id);
 CREATE INDEX scores_version ON scores (name, evaluator_version);
 ";
 
+/// The span's trace id when the client sent a `traceparent`; NULL means `id`.
+const V2: &str = "ALTER TABLE traces ADD COLUMN otel_trace_id BLOB;";
+
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The single write connection: creates the file and migrates it.
@@ -201,7 +204,7 @@ mod tests {
                 .map(|v| format!("{v:?}"))
                 .unwrap()
         };
-        assert_eq!(get("user_version"), "Integer(1)");
+        assert_eq!(get("user_version"), "Integer(2)");
         assert_eq!(get("journal_mode"), r#"Text("wal")"#);
         // 2 = incremental
         assert_eq!(get("auto_vacuum"), "Integer(2)");

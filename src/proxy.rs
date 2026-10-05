@@ -25,6 +25,7 @@ use crate::gateway::{Gateway, Route};
 use crate::identity::{self, Principal};
 use crate::observe::Observation;
 use crate::redact;
+use crate::trace_context::TraceParent;
 
 /// Prefix of gateway-only request headers; never forwarded.
 pub const GATEWAY_HEADER_PREFIX: &str = "x-gateway-";
@@ -72,6 +73,7 @@ pub async fn forward(
         route.adapter.api_key(&parts.headers),
         gw.identity.as_ref(),
     ));
+    obs.trace_parent(TraceParent::from_headers(&parts.headers));
 
     let upstream_resp = match send(&gw, route, &parts, upstream_path, body, &mut obs).await {
         Ok(resp) => resp,

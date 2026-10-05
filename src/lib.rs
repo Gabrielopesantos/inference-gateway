@@ -16,3 +16,4 @@ pub mod redact;
 pub mod server;
 #[cfg(feature = "store")]
 pub mod store;
+pub mod trace_context;
