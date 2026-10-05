@@ -50,6 +50,16 @@ pricing_file = "pricing.toml"
 [store]
 path = "gateway.db"
 
+# One span per request, sent as OTLP/HTTP JSON to {endpoint}/v1/traces, with
+# gen_ai.* attributes and no content. A client `traceparent` puts the span in
+# the caller's trace and decides sampling for it.
+# [otel]
+# endpoint = "http://localhost:4318"
+# service_name = "inference-gateway"
+# sample_ratio = 1.0    # share of traces without a traceparent
+# flush = "2s"          # export interval; also every 512 spans
+# timeout = "10s"
+
 # Content capture (prompts and responses). Needs [store].
 [capture]
 max_bytes = "8 MiB"   # raw-response copy; longer responses are stored truncated

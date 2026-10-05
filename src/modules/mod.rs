@@ -5,6 +5,8 @@
 pub mod access_log;
 #[cfg(feature = "cost")]
 pub mod cost;
+#[cfg(feature = "otel")]
+pub mod otel;
 #[cfg(feature = "prometheus")]
 pub mod prometheus;
 
@@ -151,6 +153,15 @@ pub fn build(cfg: &Config, ctx: &mut BuildCtx) -> Result<Vec<Box<dyn Module>>> {
     #[cfg(feature = "eval")]
     if let Some(c) = &cfg.eval {
         modules.push(Box::new(crate::eval::EvalModule::start(c, ctx)?));
+    }
+    if let Some(c) = &cfg.otel {
+        #[cfg(feature = "otel")]
+        modules.push(Box::new(otel::Otel::new(c)?));
+        #[cfg(not(feature = "otel"))]
+        {
+            let _ = c;
+            anyhow::bail!("[otel] needs cargo feature `otel`");
+        }
     }
     #[cfg(not(any(feature = "prometheus", feature = "store")))]
     let _ = ctx;
@@ -310,6 +321,14 @@ mod tests {
         let cfg = Config::parse(&format!("{MINIMAL}\n[store]\npath = \"g.db\"\n")).unwrap();
         let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
         assert_eq!(err.to_string(), "[store] needs cargo feature `store`");
+    }
+
+    #[cfg(not(feature = "otel"))]
+    #[test]
+    fn otel_section_without_feature_fails() {
+        let cfg = Config::parse(&format!("{MINIMAL}\n[otel]\nendpoint = \"http://c\"\n")).unwrap();
+        let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
+        assert_eq!(err.to_string(), "[otel] needs cargo feature `otel`");
     }
 
     #[cfg(not(feature = "eval"))]

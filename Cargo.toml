@@ -58,8 +58,9 @@ unwrap_used = "warn"
 expect_used = "warn"
 
 [features]
-default = ["cost", "prometheus", "store", "eval"]
+default = ["cost", "prometheus", "store", "eval", "otel"]
 cost = []
 prometheus = ["dep:prometheus"]
 store = ["dep:rusqlite", "dep:zstd"]
 eval = ["store"]
+otel = []

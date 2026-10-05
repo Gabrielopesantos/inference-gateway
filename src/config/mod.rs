@@ -30,6 +30,7 @@ pub struct FileConfig {
     pub store: Option<StoreFile>,
     pub capture: Option<CaptureFile>,
     pub eval: Option<eval::EvalFile>,
+    pub otel: Option<OtelFile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +80,43 @@ pub struct PrometheusFile {}
 #[serde(deny_unknown_fields)]
 pub struct StoreFile {
     pub path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OtelFile {
+    /// OTLP/HTTP base URL; spans go to `{endpoint}/v1/traces`.
+    pub endpoint: String,
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
+    /// Share of traces exported when the client sent no `traceparent`.
+    #[serde(default = "default_sample")]
+    pub sample_ratio: f64,
+    #[serde(default = "default_otel_flush", with = "humantime_serde")]
+    pub flush: Duration,
+    #[serde(default = "default_otel_timeout", with = "humantime_serde")]
+    pub timeout: Duration,
+}
+
+fn default_service_name() -> String {
+    "inference-gateway".into()
+}
+
+fn default_otel_flush() -> Duration {
+    Duration::from_secs(2)
+}
+
+fn default_otel_timeout() -> Duration {
+    Duration::from_secs(10)
+}
+
+#[derive(Debug, Clone)]
+pub struct OtelConfig {
+    pub traces_url: Url,
+    pub service_name: String,
+    pub sample_ratio: f64,
+    pub flush: Duration,
+    pub timeout: Duration,
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +188,7 @@ pub struct Config {
     pub store: Option<StoreFile>,
     pub capture: Option<capture::Policy>,
     pub eval: Option<eval::EvalConfig>,
+    pub otel: Option<OtelConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -247,6 +286,7 @@ impl TryFrom<FileConfig> for Config {
             .eval
             .map(|e| eval::eval_config(e, &upstreams))
             .transpose()?;
+        let otel = file.otel.map(otel_config).transpose()?;
 
         Ok(Self {
             upstreams,
@@ -256,6 +296,7 @@ impl TryFrom<FileConfig> for Config {
             store: file.store,
             capture,
             eval,
+            otel,
         })
     }
 }
@@ -283,6 +324,35 @@ fn validate_cost(cost: &CostFile) -> Result<()> {
         None => {}
     }
     Ok(())
+}
+
+fn otel_config(file: OtelFile) -> Result<OtelConfig> {
+    let mut endpoint = parse_base_url(&file.endpoint).context("otel.endpoint")?;
+    // `join` replaces the last segment unless the path ends in '/'.
+    if !endpoint.path().ends_with('/') {
+        let path = format!("{}/", endpoint.path());
+        endpoint.set_path(&path);
+    }
+    let traces_url = endpoint.join("v1/traces").context("otel.endpoint")?;
+    if !(0.0..=1.0).contains(&file.sample_ratio) {
+        bail!(
+            "otel.sample_ratio must be in [0, 1], got {}",
+            file.sample_ratio
+        );
+    }
+    if file.flush.is_zero() {
+        bail!("otel.flush must not be zero");
+    }
+    if file.service_name.is_empty() {
+        bail!("otel.service_name must not be empty");
+    }
+    Ok(OtelConfig {
+        traces_url,
+        service_name: file.service_name,
+        sample_ratio: file.sample_ratio,
+        flush: file.flush,
+        timeout: file.timeout,
+    })
 }
 
 fn capture_policy(file: CaptureFile, upstreams: &[Upstream]) -> Result<capture::Policy> {
@@ -601,6 +671,36 @@ inject_stream_usage = false
         assert_eq!(p.retention, Duration::from_hours(2));
         assert!(p.rules[0].capture);
         assert!(p.rules[0].matcher.tags.contains_key("project"));
+    }
+
+    #[test]
+    fn otel_parses_with_defaults() {
+        let o = Config::parse(&format!("{ONE}[otel]\nendpoint = \"http://lgtm:4318\"\n"))
+            .unwrap()
+            .otel
+            .unwrap();
+        assert_eq!(o.traces_url.as_str(), "http://lgtm:4318/v1/traces");
+        assert_eq!(o.service_name, "inference-gateway");
+        assert!((o.sample_ratio - 1.0).abs() < f64::EPSILON);
+        assert_eq!(o.flush, Duration::from_secs(2));
+        let o = Config::parse(&format!(
+            "{ONE}[otel]\nendpoint = \"http://c/otlp\"\nsample_ratio = 0.5\nflush = \"5s\"\n"
+        ))
+        .unwrap()
+        .otel
+        .unwrap();
+        assert_eq!(o.traces_url.as_str(), "http://c/otlp/v1/traces");
+        assert_eq!(o.flush, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn otel_errors_name_the_key() {
+        let e = err(&format!("{ONE}[otel]\nendpoint = \"grpc://c\"\n"));
+        assert!(e.contains("otel.endpoint"), "{e}");
+        let e = err(&format!(
+            "{ONE}[otel]\nendpoint = \"http://c\"\nsample_ratio = 2.0\n"
+        ));
+        assert!(e.contains("otel.sample_ratio"), "{e}");
     }
 
     #[test]
