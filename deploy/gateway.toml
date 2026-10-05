@@ -1,0 +1,63 @@
+# Gateway config for deploy/compose.yaml. Paths are inside the container.
+
+[[upstreams]]
+name = "anthropic"
+provider = "anthropic"
+base_url = "https://api.anthropic.com"
+
+[[upstreams]]
+name = "openai"
+provider = "openai"
+base_url = "https://api.openai.com"
+
+[ingress]
+# Published ports reach the container from the bridge network, not loopback.
+allow_cidrs = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[cost]
+pricing_file = "pricing.toml"
+source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+cache_file = "/data/pricing-cache.json"
+
+[prometheus]
+
+[store]
+path = "/data/gateway.db"
+
+[otel]
+endpoint = "http://lgtm:4318"
+
+# Captures requests tagged `x-gateway-tag-project: demo`. With Claude Code:
+#   ANTHROPIC_CUSTOM_HEADERS="x-gateway-tag-project: demo"
+[capture]
+retention = "30d"
+
+[[capture.rules]]
+match = { tags = { project = "demo" } }
+allow_header_override = true
+
+# Scores captured end_turn answers. Needs IG_JUDGE_API_KEY in deploy/.env.
+# [eval]
+#
+# [eval.judge]
+# base_url = "https://api.typesafe.ai"
+# model = "jev-1.13.0"
+# api_key_env = "IG_JUDGE_API_KEY"
+#
+# [[eval.evaluators]]
+# name = "answered"
+# match = { stop_reason = ["end_turn"], structured_output = false }
+# state = """
+# <user>{{ last_user_message }}</user>
+# <response>{{ output_text }}</response>
+# """
+#
+# [eval.evaluators.question]
+# type = "choice"
+# instructions = "Did the response address the request?"
+#
+# [eval.evaluators.question.criteria]
+# correct = "Fully answers what was asked"
+# partial = "Answers part of it"
+# wrong = "Answers, but incorrectly"
+# refused = ""

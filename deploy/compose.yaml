@@ -1,29 +1,47 @@
-# Local metrics stack for a gateway running on the host (`cargo run`).
-# Host networking: Prometheus scrapes the admin listener at localhost:9090.
+# Gateway plus Grafana, Prometheus and Tempo (grafana/otel-lgtm).
+#   nix build .#image && docker load < result
+#   docker compose -f deploy/compose.yaml up -d
 services:
-  prometheus:
-    image: prom/prometheus:latest
-    network_mode: host
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      # 9090 is the gateway admin port.
-      - --web.listen-address=:9091
+  gateway:
+    image: inference-gateway:dev
+    restart: unless-stopped
+    env_file:
+      # IG_IDENTITY_SECRET, IG_JUDGE_API_KEY, IG_GATEWAY_TOKEN
+      - path: .env
+        required: false
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
+      - ./gateway.toml:/etc/inference-gateway/gateway.toml:ro
+      - ../config/pricing.toml:/etc/inference-gateway/pricing.toml:ro
+      - gateway-data:/data
+    ports:
+      - 127.0.0.1:${GATEWAY_PORT:-8080}:8080
+    depends_on:
+      - lgtm
 
-  grafana:
-    image: grafana/grafana-oss:latest
-    network_mode: host
+  lgtm:
+    image: docker.io/grafana/otel-lgtm:0.35.0
+    restart: unless-stopped
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
-      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gateway.json
+      GF_PLUGINS_PREINSTALL: frser-sqlite-datasource
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /otel-lgtm/grafana/conf/provisioning/dashboards/gateway/gateway.json
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./prometheus.yaml:/otel-lgtm/prometheus.yaml:ro
+      - ./grafana/provisioning/datasources/datasources.yaml:/otel-lgtm/grafana/conf/provisioning/datasources/grafana-datasources.yaml:ro
+      - ./grafana/provisioning/dashboards/gateway.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/gateway.yaml:ro
+      - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/gateway:ro
+      # Read by the SQLite datasource. Not :ro: a WAL reader writes the -shm file.
+      - gateway-data:/gateway-data
+      - lgtm-data:/data
+    ports:
+      - 127.0.0.1:3000:3000   # Grafana
+      - 127.0.0.1:9091:9090   # Prometheus (9090 is the admin port of a gateway on the host)
+      - 127.0.0.1:4318:4318   # OTLP/HTTP, for a gateway on the host
+    extra_hosts:
+      - host.docker.internal:host-gateway
 
 volumes:
-  prometheus-data:
+  gateway-data:
+  lgtm-data:

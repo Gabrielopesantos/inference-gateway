@@ -1,0 +1,27 @@
+# otel-lgtm 0.35.0 default config plus the gateway scrape jobs. Mounting a
+# file replaces the default, so its OTLP settings are kept here.
+global:
+  scrape_interval: 5s
+  scrape_native_histograms: true
+otlp:
+  keep_identifying_resource_attributes: true
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - service.namespace
+    - service.version
+    - deployment.environment.name
+    - host.name
+storage:
+  tsdb:
+    out_of_order_time_window: 10m
+
+scrape_configs:
+  # Gateway in this compose stack.
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:9090"]
+  # Gateway on the host (`cargo run`); down when not running.
+  - job_name: gateway-host
+    static_configs:
+      - targets: ["host.docker.internal:9090"]

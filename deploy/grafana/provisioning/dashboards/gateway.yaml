@@ -4,4 +4,4 @@ providers:
   - name: gateway
     type: file
     options:
-      path: /var/lib/grafana/dashboards
+      path: /otel-lgtm/grafana/conf/provisioning/dashboards/gateway
