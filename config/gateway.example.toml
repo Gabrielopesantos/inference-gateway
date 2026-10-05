@@ -31,8 +31,16 @@ require_token = false
 # cargo feature is off is a startup error.
 
 # Sets cost_usd per request. Relative paths are relative to this file.
+# Prices come from pricing_file, from a fetched list, or both; pricing_file
+# wins per model.
 [cost]
 pricing_file = "pricing.toml"
+# Public list in LiteLLM's format, fetched at startup and every `refresh` in
+# the background. Community-maintained: keep models whose cost must be exact
+# in pricing_file. Tiered prices (>200k tokens, batch, priority) are not read.
+# source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+# refresh = "6h"
+# cache_file = "pricing-cache.json"   # last good download, used at startup
 
 # Serves metrics on the admin listener at /metrics.
 [prometheus]

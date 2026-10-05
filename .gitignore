@@ -6,3 +6,5 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+pricing-cache.json
+pricing-cache.tmp

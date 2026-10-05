@@ -269,3 +269,97 @@ async fn slow_export_drops_instead_of_blocking() {
         "{text}"
     );
 }
+
+const PRICE_LIST: &[u8] = include_bytes!("fixtures/pricing/litellm.json");
+
+/// `[cost]` with only a fetched list, served by `prices`.
+fn fetched_cost_config(mock: &MockUpstream, prices: &MockUpstream, extra: &str) -> String {
+    config(
+        &[("openai", "openai", &mock.base_url())],
+        &format!(
+            "[cost]\nsource_url = \"{}/list.json\"\n{extra}",
+            prices.base_url()
+        ),
+    )
+}
+
+/// Sends chat requests until one is priced; panics after 2 s.
+async fn priced_request(gw: &mut TestGateway) -> f64 {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        post(gw, "/openai/v1/chat/completions", CHAT)
+            .await
+            .bytes()
+            .await
+            .unwrap();
+        if let Some(usd) = gw.record().await.cost_usd {
+            return usd;
+        }
+        assert!(Instant::now() < deadline, "no price within 2 s");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+// gpt-5-mini in the list: $0.25 input, $0.025 cached input, $2 output.
+const LISTED_COST: f64 = (128.0 * 0.25 + 6912.0 * 0.025 + 80.0 * 2.0) / 1e6;
+
+#[tokio::test]
+async fn fetched_price_list_prices_requests_and_survives_a_failed_refresh() {
+    let mock = MockUpstream::start(Script::sse(OPENAI_CACHE_HIT, Duration::ZERO)).await;
+    let prices = MockUpstream::start_seq(vec![
+        Script::json(StatusCode::OK, PRICE_LIST),
+        Script::json(StatusCode::INTERNAL_SERVER_ERROR, b"{}"),
+    ])
+    .await;
+    let cfg = fetched_cost_config(&mock, &prices, "refresh = \"100ms\"\n");
+    let mut gw = spawn_gateway_with(&cfg, Options::default()).await;
+
+    assert_close(Some(priced_request(&mut gw).await), LISTED_COST);
+    assert_eq!(prices.last_request().uri.path(), "/list.json");
+
+    // Refreshes now fail; the fetched prices stay.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while prices.requests().len() < 3 {
+        assert!(Instant::now() < deadline, "no refresh attempts");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_close(Some(priced_request(&mut gw).await), LISTED_COST);
+}
+
+#[tokio::test]
+async fn price_cache_is_written_and_used_when_the_source_is_down() {
+    let dir = tempfile::tempdir().unwrap();
+    let cache = dir.path().join("prices.json");
+    let cache_line = format!("cache_file = \"{}\"\n", cache.display());
+    let mock = MockUpstream::start(Script::sse(OPENAI_CACHE_HIT, Duration::ZERO)).await;
+
+    let prices = MockUpstream::start(Script::json(StatusCode::OK, PRICE_LIST)).await;
+    let mut gw = spawn_gateway_with(
+        &fetched_cost_config(&mock, &prices, &cache_line),
+        Options::default(),
+    )
+    .await;
+    priced_request(&mut gw).await;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !cache.exists() {
+        assert!(Instant::now() < deadline, "cache not written");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    gw.shutdown(Duration::from_secs(2)).await.unwrap();
+    assert_eq!(std::fs::read(&cache).unwrap(), PRICE_LIST);
+
+    let down = MockUpstream::start(Script::json(StatusCode::NOT_FOUND, b"gone")).await;
+    let mut gw = spawn_gateway_with(
+        &fetched_cost_config(&mock, &down, &cache_line),
+        Options::default(),
+    )
+    .await;
+    // Priced on the first request: the cache loads before serving.
+    post(&gw, "/openai/v1/chat/completions", CHAT)
+        .await
+        .bytes()
+        .await
+        .unwrap();
+    assert_close(gw.record().await.cost_usd, LISTED_COST);
+    assert_eq!(std::fs::read(&cache).unwrap(), PRICE_LIST);
+}

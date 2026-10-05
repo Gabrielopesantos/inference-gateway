@@ -78,6 +78,12 @@ impl Script {
         }
     }
 
+    #[must_use]
+    pub fn with_header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.to_owned(), value.to_owned()));
+        self
+    }
+
     /// Replace headers with a `*.headers` fixture (status line skipped).
     #[must_use]
     pub fn with_fixture_headers(mut self, raw: &str) -> Self {
@@ -136,6 +142,8 @@ struct Log {
 
 struct Shared {
     script: Mutex<Script>,
+    /// Answered first, one per request, before `script`.
+    queued: Mutex<std::collections::VecDeque<Script>>,
     log: Mutex<Log>,
     disconnected: Notify,
 }
@@ -147,8 +155,15 @@ pub struct MockUpstream {
 
 impl MockUpstream {
     pub async fn start(script: Script) -> Self {
+        Self::start_seq(vec![script]).await
+    }
+
+    /// Answers each request with the next script; the last one repeats.
+    pub async fn start_seq(mut scripts: Vec<Script>) -> Self {
+        let last = scripts.pop().expect("at least one script");
         let shared = Arc::new(Shared {
-            script: Mutex::new(script),
+            script: Mutex::new(last),
+            queued: Mutex::new(scripts.into()),
             log: Mutex::new(Log::default()),
             disconnected: Notify::new(),
         });
@@ -208,7 +223,8 @@ async fn handle(State(shared): State<Arc<Shared>>, req: Request) -> Response {
         body,
     });
 
-    let script = shared.script.lock().unwrap().clone();
+    let queued = shared.queued.lock().unwrap().pop_front();
+    let script = queued.unwrap_or_else(|| shared.script.lock().unwrap().clone());
     tokio::time::sleep(script.header_delay).await;
 
     let guard = DropGuard {
