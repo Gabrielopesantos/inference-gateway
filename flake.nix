@@ -40,7 +40,11 @@
           image = pkgs.dockerTools.buildLayeredImage {
             name = "inference-gateway";
             tag = "dev";
-            contents = [ pkgs.cacert ];
+            # On PATH for `docker compose exec gateway inference-gateway eval ...`.
+            contents = [
+              gateway
+              pkgs.cacert
+            ];
             # Writable store directory for the unprivileged user.
             fakeRootCommands = ''
               mkdir -p ./data ./tmp
@@ -52,6 +56,7 @@
               User = "65534:65534";
               WorkingDir = "/data";
               Env = [
+                "PATH=/bin"
                 "IG_LISTEN=0.0.0.0:8080"
                 "IG_ADMIN_LISTEN=0.0.0.0:9090"
                 "IG_CONFIG=/etc/inference-gateway/gateway.toml"
