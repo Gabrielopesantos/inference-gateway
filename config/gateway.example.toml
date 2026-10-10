@@ -30,17 +30,24 @@ require_token = false
 # Modules: a present section enables the module. A section for a module whose
 # cargo feature is off is a startup error.
 
-# Sets cost_usd per request. Relative paths are relative to this file.
-# Prices come from pricing_file, from a fetched list, or both; pricing_file
-# wins per model.
+# Sets cost_usd per request from a public price list in LiteLLM's format,
+# fetched at startup and every `refresh` in the background. The list is
+# community-maintained, so cost is an estimate: standard tier, with the higher
+# rates for long prompts; batch, flex and priority prices are not read.
 [cost]
-pricing_file = "pricing.toml"
-# Public list in LiteLLM's format, fetched at startup and every `refresh` in
-# the background. Community-maintained: keep models whose cost must be exact
-# in pricing_file. Tiered prices (>200k tokens, batch, priority) are not read.
 # source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 # refresh = "6h"
-# cache_file = "pricing-cache.json"   # last good download, used at startup
+# Last good download, used at startup. Relative to this file.
+# cache_file = "pricing-cache.json"
+
+# USD per million tokens, only for models the list lacks (self-hosted, just
+# released). The list wins once it has the model.
+# A model id matches a key exactly, or as key + "-" + a date suffix.
+# cache_read and cache_write (5-minute TTL) default to input; cache_write_1h
+# defaults to cache_write.
+# [cost.models."my-local-model"]
+# input = 0.0
+# output = 0.0
 
 # Serves metrics on the admin listener at /metrics.
 [prometheus]

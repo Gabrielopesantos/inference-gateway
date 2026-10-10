@@ -309,8 +309,7 @@ mod tests {
     #[cfg(not(feature = "cost"))]
     #[test]
     fn cost_section_without_feature_fails() {
-        let cfg =
-            Config::parse(&format!("{MINIMAL}\n[cost]\npricing_file = \"p.toml\"\n")).unwrap();
+        let cfg = Config::parse(&format!("{MINIMAL}\n[cost]\n")).unwrap();
         let err = build(&cfg, &mut BuildCtx::default()).err().unwrap();
         assert_eq!(err.to_string(), "[cost] needs cargo feature `cost`");
     }

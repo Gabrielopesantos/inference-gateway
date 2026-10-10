@@ -4,7 +4,7 @@
 pub mod cli;
 pub mod eval;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -54,16 +54,51 @@ pub struct IngressFile {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CostFile {
-    /// Hand-maintained prices; win per model over `source_url`.
-    pub pricing_file: Option<PathBuf>,
     /// Price list in `LiteLLM`'s `model_prices_and_context_window.json` format,
     /// fetched at startup and every `refresh`.
-    pub source_url: Option<String>,
+    #[serde(default = "default_price_source")]
+    pub source_url: String,
     #[serde(default = "default_price_refresh", with = "humantime_serde")]
     pub refresh: Duration,
     /// Last good download, used until the first fetch succeeds. Defaults to
     /// `pricing-cache.json` next to the config file.
     pub cache_file: Option<PathBuf>,
+    /// For models the list lacks; the list wins.
+    #[serde(default)]
+    pub models: HashMap<String, Price>,
+}
+
+/// USD per million tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Price {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: Option<f64>,
+    pub cache_write: Option<f64>,
+    pub cache_write_1h: Option<f64>,
+    /// From the fetched list only.
+    #[serde(skip)]
+    pub tier: Option<Tier>,
+}
+
+/// Rates for a request whose prompt exceeds `above` tokens; absent cache
+/// prices fall back to the base ones.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Tier {
+    pub above: u64,
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: Option<f64>,
+    pub cache_write: Option<f64>,
+    pub cache_write_1h: Option<f64>,
+}
+
+pub const DEFAULT_PRICE_SOURCE: &str =
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+
+fn default_price_source() -> String {
+    DEFAULT_PRICE_SOURCE.into()
 }
 
 fn default_price_refresh() -> Duration {
@@ -211,14 +246,9 @@ impl Config {
         // Relative paths in the file are relative to the file.
         if let Some(dir) = path.parent() {
             if let Some(cost) = &mut config.cost {
-                if let Some(file) = &mut cost.pricing_file {
-                    *file = dir.join(&*file);
-                }
-                if cost.source_url.is_some() {
-                    let cache = cost.cache_file.take();
-                    cost.cache_file =
-                        Some(dir.join(cache.unwrap_or_else(|| DEFAULT_PRICE_CACHE.into())));
-                }
+                let cache = cost.cache_file.take();
+                cost.cache_file =
+                    Some(dir.join(cache.unwrap_or_else(|| DEFAULT_PRICE_CACHE.into())));
             }
             if let Some(store) = &mut config.store {
                 store.path = dir.join(&store.path);
@@ -302,26 +332,15 @@ impl TryFrom<FileConfig> for Config {
 }
 
 fn validate_cost(cost: &CostFile) -> Result<()> {
-    match &cost.source_url {
-        Some(url) => {
-            let url = Url::parse(url).context("cost.source_url")?;
-            if !matches!(url.scheme(), "http" | "https") {
-                bail!(
-                    "cost.source_url: scheme must be http or https, got {:?}",
-                    url.scheme()
-                );
-            }
-            if cost.refresh.is_zero() {
-                bail!("cost.refresh must not be zero");
-            }
-        }
-        None if cost.pricing_file.is_none() => {
-            bail!("[cost] needs pricing_file, source_url or both");
-        }
-        None if cost.cache_file.is_some() => {
-            bail!("cost.cache_file needs source_url");
-        }
-        None => {}
+    let url = Url::parse(&cost.source_url).context("cost.source_url")?;
+    if !matches!(url.scheme(), "http" | "https") {
+        bail!(
+            "cost.source_url: scheme must be http or https, got {:?}",
+            url.scheme()
+        );
+    }
+    if cost.refresh.is_zero() {
+        bail!("cost.refresh must not be zero");
     }
     Ok(())
 }
@@ -586,58 +605,55 @@ inject_stream_usage = false
     }
 
     #[test]
-    fn pricing_file_is_relative_to_config_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("gw.toml");
-        std::fs::write(
-            &path,
-            "[[upstreams]]\nname = \"a\"\nprovider = \"openai\"\nbase_url = \"https://x\"\n\n[cost]\npricing_file = \"pricing.toml\"\n",
-        )
-        .unwrap();
-        let cfg = Config::load(&path).unwrap();
-        let cost = cfg.cost.unwrap();
-        assert_eq!(cost.pricing_file, Some(dir.path().join("pricing.toml")));
-        assert_eq!(cost.cache_file, None);
-    }
-
-    #[test]
-    fn cost_source_url_gets_a_cache_file_next_to_the_config() {
+    fn bare_cost_section_uses_the_public_list_and_a_cache_next_to_the_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("gw.toml");
         let write = |extra: &str| {
-            std::fs::write(
-                &path,
-                format!("{ONE}[cost]\nsource_url = \"https://prices.example/list.json\"\n{extra}"),
-            )
-            .unwrap();
+            std::fs::write(&path, format!("{ONE}[cost]\n{extra}")).unwrap();
             Config::load(&path).unwrap().cost.unwrap()
         };
         let cost = write("");
-        assert_eq!(cost.pricing_file, None);
+        assert_eq!(cost.source_url, DEFAULT_PRICE_SOURCE);
         assert_eq!(cost.refresh, Duration::from_hours(6));
         assert_eq!(cost.cache_file, Some(dir.path().join("pricing-cache.json")));
+        assert!(cost.models.is_empty());
         let cost = write("refresh = \"30m\"\ncache_file = \"p.json\"\n");
         assert_eq!(cost.refresh, Duration::from_mins(30));
         assert_eq!(cost.cache_file, Some(dir.path().join("p.json")));
     }
 
     #[test]
-    fn cost_needs_a_price_source() {
-        let e = err(&format!("{ONE}[cost]\n"));
-        assert!(
-            e.contains("[cost] needs pricing_file, source_url or both"),
-            "{e}"
+    fn cost_models_parse_and_reject_unknown_keys() {
+        let model = "[cost.models.\"local\"]\ninput = 0.5\noutput = 1.5\n";
+        let cost = Config::parse(&format!("{ONE}{model}"))
+            .unwrap()
+            .cost
+            .unwrap();
+        assert_eq!(
+            cost.models["local"],
+            Price {
+                input: 0.5,
+                output: 1.5,
+                cache_read: None,
+                cache_write: None,
+                cache_write_1h: None,
+                tier: None,
+            }
         );
+        let e = err(&format!("{ONE}{model}tier = 1\n"));
+        assert!(e.contains("tier"), "{e}");
+    }
+
+    #[test]
+    fn cost_source_url_must_be_http() {
         let e = err(&format!(
             "{ONE}[cost]\nsource_url = \"ftp://x/list.json\"\n"
         ));
         assert!(e.contains("cost.source_url: scheme"), "{e}");
         let e = err(&format!("{ONE}[cost]\nsource_url = \"nope\"\n"));
         assert!(e.contains("cost.source_url"), "{e}");
-        let e = err(&format!(
-            "{ONE}[cost]\npricing_file = \"p.toml\"\ncache_file = \"c.json\"\n"
-        ));
-        assert!(e.contains("cost.cache_file needs source_url"), "{e}");
+        let e = err(&format!("{ONE}[cost]\nrefresh = \"0s\"\n"));
+        assert!(e.contains("cost.refresh"), "{e}");
     }
 
     const ONE: &str =

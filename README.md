@@ -33,6 +33,30 @@ nix develop
 cargo run -- --config config/gateway.example.toml
 ```
 
+## How it works
+
+```
+client ──► ingress ──► proxy ──► upstream
+                         │ copy of the response stream
+                         ▼
+                    observation ──► one record per request
+                         │
+                       cost (sets cost_usd)
+                         │
+       ┌─────────┬───────┴────┬──────────┐
+   access log  prometheus   store      otel        one bounded queue each
+                              │
+                          eval jobs ──► Jev ──► scores
+```
+
+- The proxy forwards the request and streams the response back. It never waits on anything below it.
+- A copy of the response feeds the provider adapter's parser, which yields tokens, timings, stop reason and
+  errors. Every request ends in exactly one record: completed, failed or cancelled by the client.
+- Each exporter has its own worker behind a bounded queue. A slow exporter drops records, counted in
+  `gateway_module_dropped_total`. It does not slow the proxy or the other exporters.
+- The store writes the trace row, the captured content and the evaluation jobs in one SQLite transaction. Workers
+  score the jobs later, in the gateway or in a separate `eval run` process.
+
 ## Harness setup
 
 Clients reach an upstream at `/{upstream name}/...`.
@@ -78,6 +102,28 @@ Evaluation also runs standalone against the same database: `inference-gateway ev
 - Spans and metrics carry no content.
 - A gateway reachable from other machines relays for anyone who can reach it: set `[ingress] allow_cidrs` and/or
   `require_token`.
+
+## Cost
+
+`[cost]` sets `cost_usd` per request from [LiteLLM's public price list](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json).
+The gateway fetches the list at startup and refreshes it every 6 hours. It caches the list on disk for the next
+start. The cost is an estimate:
+
+- Standard-tier prices, including the higher rates some models charge for long prompts. Batch, flex and priority
+  prices are not read.
+- A model the list lacks gets no cost and one warning in the log. Price it under `[cost.models]`; the list wins
+  once it has the model.
+- A request keeps the cost computed when it finished. Later price changes do not rewrite stored rows.
+
+## Limits
+
+- Only Anthropic Messages and OpenAI Chat Completions are observed. Other paths pass through and get a trace
+  row with status and duration, but no tokens, cost or content. This includes the OpenAI Responses API, which
+  current Codex versions use.
+- The request body is buffered, up to `--max-body` (default 32 MiB). The response is streamed.
+- The gateway asks upstreams for uncompressed responses (`accept-encoding: identity`), so it can parse the copy.
+- Trace rows are never deleted. Only captured content has a retention.
+- One SQLite file with one writer: one gateway process per database.
 
 ## Metrics
 

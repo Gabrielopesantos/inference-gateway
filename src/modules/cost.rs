@@ -1,5 +1,5 @@
-//! Sets `cost_usd` from a pricing table: hand-maintained prices
-//! (`config/pricing.toml`), a fetched public price list, or both.
+//! Sets `cost_usd` from a fetched public price list. Models the list lacks
+//! can be priced in `[cost.models]`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -7,14 +7,12 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
 use serde_json::Value;
 use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
 use tracing::{info, warn};
 
 use super::{Module, Phase};
-use crate::config::CostFile;
+use crate::config::{CostFile, Price, Tier};
 use crate::observe::record::RequestRecord;
 use crate::providers::Usage;
 
@@ -23,35 +21,20 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LIST_BYTES: usize = 16 * 1024 * 1024;
 /// A list with fewer priced models is an error page or a truncated file.
 const MIN_MODELS: usize = 10;
-
-/// USD per million tokens.
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Price {
-    pub input: f64,
-    pub output: f64,
-    pub cache_read: Option<f64>,
-    pub cache_write: Option<f64>,
-    pub cache_write_1h: Option<f64>,
-}
+/// Wait after a failed fetch while no list has loaded.
+const RETRY_WITHOUT_LIST: Duration = Duration::from_mins(1);
 
 type Prices = HashMap<String, Price>;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PricingFile {
-    models: Prices,
-}
 
 /// Swapped whole on refresh; readers clone the `Arc`.
 type Fetched = Arc<RwLock<Arc<Prices>>>;
 type Warned = Arc<Mutex<HashSet<String>>>;
 
 pub struct Cost {
-    /// From `pricing_file`; win per model.
-    overrides: Prices,
     /// From `source_url`; empty until the cache file or first fetch loads.
     fetched: Fetched,
+    /// From `[cost.models]`; used for models the list lacks.
+    fallback: Prices,
     warned: Warned,
     refresher: Option<JoinHandle<()>>,
 }
@@ -65,25 +48,14 @@ impl Drop for Cost {
 }
 
 impl Cost {
-    /// With `source_url`, starts the refresh task: call inside a tokio
-    /// runtime. Neither the first fetch nor a failed one blocks or fails.
+    /// Starts the refresh task: call inside a tokio runtime. Neither the
+    /// first fetch nor a failed one blocks or fails.
     ///
     /// # Errors
     ///
-    /// Unreadable or invalid pricing file, or HTTP client build failure.
+    /// HTTP client build failure.
     pub fn new(cfg: &CostFile) -> Result<Self> {
-        let overrides = match &cfg.pricing_file {
-            Some(path) => {
-                let text = std::fs::read_to_string(path)
-                    .with_context(|| format!("reading pricing file {}", path.display()))?;
-                parse_file(&text).with_context(|| format!("pricing file {}", path.display()))?
-            }
-            None => Prices::new(),
-        };
-        let mut cost = Self::with(overrides, Prices::new());
-        let Some(url) = &cfg.source_url else {
-            return Ok(cost);
-        };
+        let mut cost = Self::with(Prices::new(), cfg.models.clone());
         if let Some(cache) = &cfg.cache_file {
             match load_cache(cache) {
                 Ok(Some(prices)) => {
@@ -102,7 +74,7 @@ impl Cost {
             .context("building price list HTTP client")?;
         cost.refresher = Some(tokio::spawn(refresh_loop(
             client,
-            url.clone(),
+            cfg.source_url.clone(),
             cfg.refresh,
             cfg.cache_file.clone(),
             cost.fetched.clone(),
@@ -111,24 +83,22 @@ impl Cost {
         Ok(cost)
     }
 
-    fn with(overrides: Prices, fetched: Prices) -> Self {
+    fn with(fetched: Prices, fallback: Prices) -> Self {
         Self {
-            overrides,
             fetched: Arc::new(RwLock::new(Arc::new(fetched))),
+            fallback,
             warned: Warned::default(),
             refresher: None,
         }
     }
 
     fn price(&self, model: &str) -> Option<Price> {
-        find(&self.overrides, model).or_else(|| {
-            let fetched = self
-                .fetched
-                .read()
-                .unwrap_or_else(PoisonError::into_inner)
-                .clone();
-            find(&fetched, model)
-        })
+        let fetched = self
+            .fetched
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        find(&fetched, model).or_else(|| find(&self.fallback, model))
     }
 }
 
@@ -140,34 +110,32 @@ fn find(prices: &Prices, model: &str) -> Option<Price> {
         .copied()
 }
 
-fn parse_file(text: &str) -> Result<Prices> {
-    let file: PricingFile = toml::from_str(text)?;
-    Ok(file.models)
+/// Per token → per million, without float noise such as 0.24999999999999997.
+fn per_mtok(entry: &Value, key: &str) -> Option<f64> {
+    entry
+        .get(key)
+        .and_then(Value::as_f64)
+        .map(|usd| (usd * 1e12).round() / 1e6)
 }
 
 /// `LiteLLM`'s `model_prices_and_context_window.json`: model id → object
 /// with USD per token. Entries without token prices (images, audio) are
-/// skipped; tiered prices (`*_above_200k_tokens`, batch, priority) are not read.
+/// skipped; batch, flex and priority prices are not read.
 fn parse_litellm(bytes: &[u8]) -> Result<Prices> {
     let list: HashMap<String, Value> = serde_json::from_slice(bytes)?;
-    // Per token → per million, without float noise such as 0.24999999999999997.
-    let per_mtok = |entry: &Value, key: &str| {
-        entry
-            .get(key)
-            .and_then(Value::as_f64)
-            .map(|usd| (usd * 1e12).round() / 1e6)
-    };
     let prices: Prices = list
         .iter()
         // Documents the format.
         .filter(|(model, _)| model.as_str() != "sample_spec")
         .filter_map(|(model, e)| {
+            let output = per_mtok(e, "output_cost_per_token")?;
             let price = Price {
                 input: per_mtok(e, "input_cost_per_token")?,
-                output: per_mtok(e, "output_cost_per_token")?,
+                output,
                 cache_read: per_mtok(e, "cache_read_input_token_cost"),
                 cache_write: per_mtok(e, "cache_creation_input_token_cost"),
                 cache_write_1h: per_mtok(e, "cache_creation_input_token_cost_above_1hr"),
+                tier: tier(e, output),
             };
             Some((model.clone(), price))
         })
@@ -179,6 +147,25 @@ fn parse_litellm(bytes: &[u8]) -> Result<Prices> {
         );
     }
     Ok(prices)
+}
+
+/// Long-prompt prices: the base keys with an `_above_{N}k_tokens` suffix. An
+/// entry has at most one threshold.
+fn tier(entry: &Value, base_output: f64) -> Option<Tier> {
+    let (suffix, above) = entry.as_object()?.keys().find_map(|key| {
+        let suffix = key.strip_prefix("input_cost_per_token")?;
+        let thousands = suffix.strip_prefix("_above_")?.strip_suffix("k_tokens")?;
+        Some((suffix, thousands.parse::<u64>().ok()? * 1000))
+    })?;
+    let at = |key: &str| per_mtok(entry, &format!("{key}{suffix}"));
+    Some(Tier {
+        above,
+        input: at("input_cost_per_token")?,
+        output: at("output_cost_per_token").unwrap_or(base_output),
+        cache_read: at("cache_read_input_token_cost"),
+        cache_write: at("cache_creation_input_token_cost"),
+        cache_write_1h: at("cache_creation_input_token_cost_above_1hr"),
+    })
 }
 
 /// `None` when there is no cache yet.
@@ -210,6 +197,15 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     Ok(body)
 }
 
+/// Time to the next fetch: sooner while there are no prices to fall back on.
+fn next_fetch(every: Duration, has_list: bool) -> Duration {
+    if has_list {
+        every
+    } else {
+        every.min(RETRY_WITHOUT_LIST)
+    }
+}
+
 /// Fetches now, then every `every`. A failed fetch keeps the current prices.
 async fn refresh_loop(
     client: reqwest::Client,
@@ -219,10 +215,7 @@ async fn refresh_loop(
     fetched: Fetched,
     warned: Warned,
 ) {
-    let mut ticks = tokio::time::interval(every);
-    ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        ticks.tick().await;
         let result = async {
             let bytes = fetch(&client, &url).await?;
             Ok::<_, anyhow::Error>((parse_litellm(&bytes)?, bytes))
@@ -249,6 +242,11 @@ async fn refresh_loop(
                 warn!(url, error = %format!("{e:#}"), "price refresh failed; keeping current prices");
             }
         }
+        let has_list = !fetched
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_empty();
+        tokio::time::sleep(next_fetch(every, has_list)).await;
     }
 }
 
@@ -276,18 +274,34 @@ fn is_date(s: &str) -> bool {
     }
 }
 
+/// The tier's rates when the prompt exceeds its threshold; they apply to the
+/// whole request.
+fn rates(price: &Price, prompt_tokens: u64) -> Price {
+    match price.tier {
+        Some(t) if prompt_tokens > t.above => Price {
+            input: t.input,
+            output: t.output,
+            cache_read: t.cache_read.or(price.cache_read),
+            cache_write: t.cache_write.or(price.cache_write),
+            cache_write_1h: t.cache_write_1h.or(price.cache_write_1h),
+            // Already applied; must not tier again if this result is re-priced.
+            tier: None,
+        },
+        _ => *price,
+    }
+}
+
 #[allow(clippy::cast_precision_loss)]
 fn cost(price: &Price, u: &Usage) -> Option<f64> {
     if u.input_tokens_total.is_none() && u.output_tokens.is_none() {
         return None;
     }
+    let total = u.input_tokens_total.unwrap_or(0);
+    let price = rates(price, total);
     let read = u.cache_read_tokens.unwrap_or(0);
     let write = u.cache_write_tokens.unwrap_or(0);
     let write_1h = u.cache_write_1h_tokens.unwrap_or(0).min(write);
-    let uncached = u
-        .input_tokens_total
-        .unwrap_or(0)
-        .saturating_sub(read + write);
+    let uncached = total.saturating_sub(read + write);
     let output = u.output_tokens.unwrap_or(0);
     let write_5m_price = price.cache_write.unwrap_or(price.input);
     let usd = uncached as f64 * price.input
@@ -327,22 +341,26 @@ impl Module for Cost {
 mod tests {
     use super::*;
 
-    const PRICING: &str = include_str!("../../config/pricing.toml");
+    const LITELLM: &[u8] = include_bytes!("../../tests/fixtures/pricing/litellm.json");
 
     fn assert_close(actual: Option<f64>, expected: f64) {
         let actual = actual.unwrap();
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
     }
 
-    const LITELLM: &[u8] = include_bytes!("../../tests/fixtures/pricing/litellm.json");
-
-    fn table() -> Cost {
-        Cost::with(parse_file(PRICING).unwrap(), Prices::new())
+    fn flat(input: f64, output: f64) -> Price {
+        Price {
+            input,
+            output,
+            cache_read: None,
+            cache_write: None,
+            cache_write_1h: None,
+            tier: None,
+        }
     }
 
-    #[test]
-    fn shipped_pricing_file_parses() {
-        assert!(table().overrides.len() > 20);
+    fn table() -> Cost {
+        Cost::with(parse_litellm(LITELLM).unwrap(), Prices::new())
     }
 
     #[test]
@@ -351,43 +369,48 @@ mod tests {
         assert_eq!(
             prices["claude-sonnet-5"],
             Price {
-                input: 2.0,
-                output: 10.0,
                 cache_read: Some(0.2),
                 cache_write: Some(2.5),
                 cache_write_1h: Some(4.0),
+                ..flat(2.0, 10.0)
             }
         );
         assert_eq!(
             prices["gpt-5-mini"],
             Price {
-                input: 0.25,
-                output: 2.0,
                 cache_read: Some(0.025),
-                cache_write: None,
-                cache_write_1h: None,
+                ..flat(0.25, 2.0)
             }
         );
         assert!(!prices.contains_key("sample_spec"));
     }
 
-    /// The shipped file and the list agree where both have the model.
     #[test]
-    fn litellm_list_agrees_with_shipped_file() {
-        let file = parse_file(PRICING).unwrap();
-        let list = parse_litellm(LITELLM).unwrap();
-        let mut shared = 0;
-        for (model, price) in &file {
-            if let Some(listed) = list.get(model) {
-                shared += 1;
-                assert_eq!(
-                    (listed.input, listed.output, listed.cache_read),
-                    (price.input, price.output, price.cache_read),
-                    "{model}"
-                );
-            }
-        }
-        assert!(shared >= 8, "{shared}");
+    fn litellm_list_maps_long_prompt_tiers() {
+        let prices = parse_litellm(LITELLM).unwrap();
+        assert_eq!(
+            prices["gpt-5.5"].tier,
+            Some(Tier {
+                above: 272_000,
+                input: 10.0,
+                output: 45.0,
+                cache_read: Some(1.0),
+                cache_write: None,
+                cache_write_1h: None,
+            })
+        );
+        assert_eq!(
+            prices["claude-sonnet-4-5"].tier,
+            Some(Tier {
+                above: 200_000,
+                input: 6.0,
+                output: 22.5,
+                cache_read: Some(0.6),
+                cache_write: Some(7.5),
+                cache_write_1h: Some(12.0),
+            })
+        );
+        assert_eq!(prices["gpt-5"].tier, None);
     }
 
     #[test]
@@ -401,22 +424,28 @@ mod tests {
     }
 
     #[test]
-    fn pricing_file_wins_over_the_list() {
-        let ours = Price {
-            input: 99.0,
-            output: 99.0,
-            cache_read: None,
-            cache_write: None,
-            cache_write_1h: None,
-        };
-        let overrides = Prices::from([("gpt-5-mini".to_owned(), ours)]);
-        let t = Cost::with(overrides, parse_litellm(LITELLM).unwrap());
-        assert_eq!(t.price("gpt-5-mini"), Some(ours));
-        // The dated id is in the list, but the override covers it first.
-        assert_eq!(t.price("gpt-5-mini-2025-08-07"), Some(ours));
-        assert_eq!(t.price("gpt-5-nano").map(|p| p.input), Some(0.05));
-        assert_eq!(t.price("o3-2025-04-16").map(|p| p.input), Some(2.0));
+    fn list_wins_over_inline_prices() {
+        let ours = flat(99.0, 99.0);
+        let fallback = Prices::from([
+            ("gpt-5-mini".to_owned(), ours),
+            ("local-model".to_owned(), ours),
+        ]);
+        let t = Cost::with(parse_litellm(LITELLM).unwrap(), fallback);
+        assert_eq!(t.price("gpt-5-mini").map(|p| p.input), Some(0.25));
+        assert_eq!(
+            t.price("gpt-5-mini-2025-08-07").map(|p| p.input),
+            Some(0.25)
+        );
+        assert_eq!(t.price("local-model"), Some(ours));
+        assert_eq!(t.price("local-model-2026-01-01"), Some(ours));
         assert!(t.price("gpt-unknown").is_none());
+    }
+
+    #[test]
+    fn inline_prices_work_before_the_list_loads() {
+        let ours = flat(1.0, 2.0);
+        let t = Cost::with(Prices::new(), Prices::from([("gpt-5".to_owned(), ours)]));
+        assert_eq!(t.price("gpt-5"), Some(ours));
     }
 
     #[test]
@@ -434,13 +463,22 @@ mod tests {
     }
 
     #[test]
+    fn failed_fetch_is_retried_sooner_without_a_list() {
+        let every = Duration::from_hours(6);
+        assert_eq!(next_fetch(every, true), every);
+        assert_eq!(next_fetch(every, false), RETRY_WITHOUT_LIST);
+        let short = Duration::from_secs(5);
+        assert_eq!(next_fetch(short, false), short);
+    }
+
+    #[test]
     fn matches_exact_and_dated_ids_only() {
         let t = table();
         let haiku = t.price("claude-haiku-4-5");
         assert!(haiku.is_some());
         assert_eq!(t.price("claude-haiku-4-5-20251001"), haiku);
-        assert_eq!(t.price("gpt-5-mini-2025-08-07"), t.price("gpt-5-mini"));
-        assert_ne!(t.price("gpt-5-mini-2025-08-07"), t.price("gpt-5"));
+        assert_eq!(t.price("gpt-5-nano-2025-08-07"), t.price("gpt-5-nano"));
+        assert_ne!(t.price("gpt-5-nano-2025-08-07"), t.price("gpt-5"));
         assert!(t.price("gpt-5-turbo").is_none());
         assert!(t.price("gpt-5-1").is_none());
         assert!(t.price("Qwen/Qwen3-8B").is_none());
@@ -449,11 +487,10 @@ mod tests {
     #[test]
     fn cache_tokens_use_cache_prices() {
         let p = Price {
-            input: 2.0,
-            output: 10.0,
             cache_read: Some(0.2),
             cache_write: Some(2.5),
             cache_write_1h: Some(4.0),
+            ..flat(2.0, 10.0)
         };
         let u = Usage {
             input_tokens_total: Some(1_000_000 + 2_000_000 + 4_000_000),
@@ -469,13 +506,7 @@ mod tests {
 
     #[test]
     fn missing_cache_prices_default_to_input() {
-        let p = Price {
-            input: 1.0,
-            output: 0.0,
-            cache_read: None,
-            cache_write: None,
-            cache_write_1h: None,
-        };
+        let p = flat(1.0, 0.0);
         let u = Usage {
             input_tokens_total: Some(3_000_000),
             cache_read_tokens: Some(1_000_000),
@@ -484,6 +515,27 @@ mod tests {
             ..Usage::default()
         };
         assert_close(cost(&p, &u), 3.0);
+    }
+
+    #[test]
+    fn long_prompt_is_billed_at_tier_rates() {
+        let p = table().price("gpt-5.5").unwrap();
+        let usage = |prompt| Usage {
+            input_tokens_total: Some(prompt),
+            cache_read_tokens: Some(100_000),
+            output_tokens: Some(1_000),
+            ..Usage::default()
+        };
+        // At the threshold: $5 input, $0.50 cached, $30 output.
+        assert_close(
+            cost(&p, &usage(272_000)),
+            (172_000.0 * 5.0 + 100_000.0 * 0.5 + 1_000.0 * 30.0) / 1e6,
+        );
+        // Above it, the whole request: $10 input, $1 cached, $45 output.
+        assert_close(
+            cost(&p, &usage(272_001)),
+            (172_001.0 * 10.0 + 100_000.0 * 1.0 + 1_000.0 * 45.0) / 1e6,
+        );
     }
 
     #[test]

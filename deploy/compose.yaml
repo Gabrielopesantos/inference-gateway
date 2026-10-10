@@ -11,7 +11,6 @@ services:
         required: false
     volumes:
       - ./gateway.toml:/etc/inference-gateway/gateway.toml:ro
-      - ../config/pricing.toml:/etc/inference-gateway/pricing.toml:ro
       - gateway-data:/data
     ports:
       - 127.0.0.1:${GATEWAY_PORT:-8080}:8080

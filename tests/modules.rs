@@ -3,7 +3,8 @@
 
 mod support;
 
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -25,12 +26,20 @@ const OPENAI_CACHE_HIT: &[u8] = include_bytes!("fixtures/openai/cache_hit.sse");
 const MESSAGES: &str = r#"{"model":"claude-sonnet-5","max_tokens":64,"stream":true,"messages":[]}"#;
 const CHAT: &str = r#"{"model":"gpt-5-mini","stream":true,"messages":[]}"#;
 
+/// A copy of the price list for `cache_file`, so the first request is priced.
+static PRICE_CACHE: LazyLock<PathBuf> = LazyLock::new(|| {
+    let path = Path::new(env!("CARGO_TARGET_TMPDIR")).join("modules-price-cache.json");
+    std::fs::write(&path, PRICE_LIST).unwrap();
+    path
+});
+
+/// Prices come from the cache; the source refuses connections.
 fn modules_config(provider: &str, mock: &MockUpstream) -> String {
     config(
         &[(provider, provider, &mock.base_url())],
         &format!(
-            "[cost]\npricing_file = \"{}/config/pricing.toml\"\n\n[prometheus]\n",
-            env!("CARGO_MANIFEST_DIR")
+            "[cost]\nsource_url = \"http://127.0.0.1:1/list.json\"\ncache_file = \"{}\"\n\n[prometheus]\n",
+            PRICE_CACHE.display()
         ),
     )
 }
@@ -272,7 +281,7 @@ async fn slow_export_drops_instead_of_blocking() {
 
 const PRICE_LIST: &[u8] = include_bytes!("fixtures/pricing/litellm.json");
 
-/// `[cost]` with only a fetched list, served by `prices`.
+/// `[cost]` with the list served by `prices`.
 fn fetched_cost_config(mock: &MockUpstream, prices: &MockUpstream, extra: &str) -> String {
     config(
         &[("openai", "openai", &mock.base_url())],

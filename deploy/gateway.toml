@@ -15,8 +15,6 @@ base_url = "https://api.openai.com"
 allow_cidrs = ["127.0.0.0/8", "::1/128", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 [cost]
-pricing_file = "pricing.toml"
-source_url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 cache_file = "/data/pricing-cache.json"
 
 [prometheus]
