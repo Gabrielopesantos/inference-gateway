@@ -250,7 +250,7 @@ impl Observation {
                 }
             }
         }
-        // hyper may drop a fixed-length body without polling its end.
+        // Same hyper quirk as the HEAD/204/304 case above.
         if self.expected_len.is_some_and(|len| self.received >= len) {
             self.finish(End::Complete);
         }

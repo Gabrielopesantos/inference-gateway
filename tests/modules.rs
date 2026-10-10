@@ -309,7 +309,7 @@ async fn priced_request(gw: &mut TestGateway) -> f64 {
     }
 }
 
-// gpt-5-mini in the list: $0.25 input, $0.025 cached input, $2 output.
+// Same gpt-5-mini rates as above.
 const LISTED_COST: f64 = (128.0 * 0.25 + 6912.0 * 0.025 + 80.0 * 2.0) / 1e6;
 
 #[tokio::test]

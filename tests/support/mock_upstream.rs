@@ -1,7 +1,7 @@
-//! Scripted upstream for integration tests. Replays a response chunk by chunk
-//! with per-chunk delays, records what it received, and notices when the
-//! gateway drops the response before the last chunk (client disconnect
-//! propagated upstream).
+//! Scripted upstream for integration tests. It replays a response chunk by
+//! chunk with per-chunk delays, and records what it received. It notices
+//! when the gateway drops the response before the last chunk: that means a
+//! client disconnect propagated upstream.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

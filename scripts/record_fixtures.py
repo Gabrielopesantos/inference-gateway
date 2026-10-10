@@ -5,9 +5,9 @@
 
 Writes $RECORD_DIR (default recorded/) <n>-<model>-<kinds>.{sse,json,headers,request}.
 `.request` holds the request headers (credentials dropped) and the body's
-`metadata`, to find a stable session id; the rest of the request body is never
-saved. Responses hold the assistant's output: review before copying into
-tests/fixtures/anthropic/.
+`metadata`, used to find a stable session id. The rest of the request body is
+never saved. Responses hold the assistant's output: review before copying
+into tests/fixtures/anthropic/.
 """
 
 import json
