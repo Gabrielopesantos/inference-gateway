@@ -166,3 +166,7 @@ Providers count input differently. The gateway reports:
 For streaming OpenAI requests the gateway adds `stream_options.include_usage` when absent, so usage is observed.
 Clients then receive a final chunk with empty `choices`; `inject_stream_usage = false` on the upstream turns it
 off.
+
+## License
+
+[MIT](LICENSE)
