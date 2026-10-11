@@ -26,17 +26,17 @@ pub async fn run(tx: mpsc::Sender<Msg>, max_age: Duration) {
 }
 
 /// Content rows of traces started before `cutoff_ms`, then blobs no content
-/// row references. Every captured trace has an output row, so scans stay
-/// within the retention window.
+/// row references. Driven from the content tables, which retention keeps
+/// small; trace rows grow forever.
 pub fn retain(conn: &mut Connection, cutoff_ms: i64) -> Result<()> {
     let tx = conn.transaction()?;
     let mut deleted = 0;
-    for sql in [
-        "DELETE FROM trace_inputs WHERE trace_id IN (SELECT id FROM traces WHERE started_at < ?1)",
-        "DELETE FROM trace_params WHERE trace_id IN (SELECT id FROM traces WHERE started_at < ?1)",
-        "DELETE FROM trace_outputs WHERE trace_id IN (SELECT id FROM traces WHERE started_at < ?1)",
-    ] {
-        deleted += tx.execute(sql, [cutoff_ms])?;
+    for table in ["trace_inputs", "trace_params", "trace_outputs"] {
+        let sql = format!(
+            "DELETE FROM {table} WHERE EXISTS
+               (SELECT 1 FROM traces t WHERE t.id = {table}.trace_id AND t.started_at < ?1)"
+        );
+        deleted += tx.execute(&sql, [cutoff_ms])?;
     }
     let blobs = tx.execute(
         "DELETE FROM blobs

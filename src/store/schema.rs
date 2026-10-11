@@ -170,6 +170,7 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// File cannot be opened or migrated.
 pub fn open_writer(path: &Path) -> Result<Connection> {
+    create_private(path).with_context(|| format!("creating store {}", path.display()))?;
     let mut conn =
         Connection::open(path).with_context(|| format!("opening store {}", path.display()))?;
     // auto_vacuum only takes effect before the first table is created.
@@ -182,6 +183,19 @@ pub fn open_writer(path: &Path) -> Result<Connection> {
     conn.busy_timeout(BUSY_TIMEOUT)?;
     migrate(&mut conn).with_context(|| format!("migrating store {}", path.display()))?;
     Ok(conn)
+}
+
+/// Owner-only, since the store holds prompts. `SQLite` gives `-wal` and `-shm`
+/// the same mode. An existing file keeps its mode.
+fn create_private(path: &Path) -> std::io::Result<()> {
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    match opts.open(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        r => r.map(drop),
+    }
 }
 
 /// # Errors
@@ -234,6 +248,22 @@ mod tests {
         assert_eq!(get("journal_mode"), r#"Text("wal")"#);
         // 2 = incremental
         assert_eq!(get("auto_vacuum"), "Integer(2)");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn store_files_are_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("g.db");
+        let _conn = open_writer(&path).unwrap();
+        for name in ["g.db", "g.db-wal", "g.db-shm"] {
+            let mode = std::fs::metadata(dir.path().join(name))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600, "{name}");
+        }
     }
 
     #[test]
