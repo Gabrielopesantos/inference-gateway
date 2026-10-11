@@ -35,8 +35,6 @@ match = { tags = { project = "demo" } }
 allow_header_override = true
 
 # Scores captured end_turn answers. Needs IG_JUDGE_API_KEY in deploy/.env.
-# [eval]
-#
 # [eval.judge]
 # base_url = "https://api.typesafe.ai"
 # model = "jev-1.13.0"
@@ -45,32 +43,23 @@ allow_header_override = true
 # [[eval.evaluators]]
 # name = "answered"
 # match = { stop_reason = ["end_turn"], structured_output = false }
-# pass = ["correct", "partial"]
-# min_confidence = 0.7
-# state = """
+# input = """
 # <user>{{ last_user_message }}</user>
 # <response>{{ output_text }}</response>
 # """
-#
-# [eval.evaluators.question]
-# type = "choice"
-# instructions = "Did the response address the request?"
-#
-# [eval.evaluators.question.criteria]
-# correct = "Fully answers what was asked"
-# partial = "Answers part of it"
-# wrong = "Answers, but incorrectly"
-# refused = ""
+# kind = "choice"
+# question = "Did the response address the request?"
+# criteria = { correct = "Fully answers what was asked", partial = "Answers part of it", wrong = "Answers, but incorrectly", refused = "" }
+# pass = ["correct", "partial"]
+# min_confidence = 0.7
 #
 # [[eval.evaluators]]
 # name = "helpful"
 # match = { stop_reason = ["end_turn"], structured_output = false }
-# pass = "yes"
-# state = """
+# input = """
 # <user>{{ last_user_message }}</user>
 # <response>{{ output_text }}</response>
 # """
-#
-# [eval.evaluators.question]
-# type = "noul"
-# instructions = "Is the response helpful to the user?"
+# kind = "yes_no"
+# question = "Is the response helpful to the user?"
+# pass = ["yes"]

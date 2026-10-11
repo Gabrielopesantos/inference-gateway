@@ -88,7 +88,7 @@ sample = 0.25         # deterministic per trace id
 # asynchronously. Needs [store]; only captured traces with outcome ok are
 # enqueued. Workers also run standalone:
 # `inference-gateway eval run --config <file>` on the same database.
-# [eval]
+# [eval.worker]         # all optional
 # concurrency = 4       # jobs in flight = concurrent judge calls
 # max_attempts = 5      # 408/429/5xx/timeouts/invalid answers are retried
 # lease = "5m"          # a crashed worker's job is reclaimed after this
@@ -98,11 +98,11 @@ sample = 0.25         # deterministic per trace id
 # base_url = "https://api.typesafe.ai"
 # model = "jev-1.13.0"            # pin: jev-latest moves between releases
 # api_key_env = "IG_JUDGE_API_KEY"
-# max_state_tokens = 32000        # judge limit for state plus question
+# max_input_tokens = 32000        # judge limit for input plus question
 #
-# One question per evaluator. Editing the model, state or question makes a new
-# evaluator version; `inference-gateway eval backfill --evaluator NAME` scores
-# old traces again under it.
+# # One question per evaluator. Editing the judge model, input, question or
+# # criteria makes a new evaluator version; `inference-gateway eval backfill
+# # --evaluator NAME` scores old traces again under it.
 # [[eval.evaluators]]
 # name = "answered"
 # # stop_reason (evaluators only): raw provider values. Agent turns that call a
@@ -111,24 +111,20 @@ sample = 0.25         # deterministic per trace id
 # # such as Claude Code's session-title call.
 # match = { upstream = "anthropic", tags = { project = "gateway-dev" }, stop_reason = ["end_turn"], structured_output = false }
 # sample = 1.0
-# # Verdict in the score_verdicts view and dashboards; not part of the version,
-# # so edits apply to stored scores. pass: labels from criteria (choice, score)
-# # or "yes" / "no" (noul). No pass means no verdict.
-# pass = ["correct", "partial"]
-# min_confidence = 0.7            # below it the verdict is uncertain
-# # Variables: last_user_message, output_text, system, conversation,
-# # tool_calls, thinking, stop_reason.
-# state = """
+# # Template for what the judge reads. Variables: last_user_message,
+# # output_text, system, conversation, tool_calls, thinking, stop_reason.
+# input = """
 # <user>{{ last_user_message }}</user>
 # <response>{{ output_text }}</response>
 # """
-#
-# [eval.evaluators.question]
-# type = "choice"                 # noul (probability of yes) | choice | score
-# instructions = "Did the response address the request?"
-#
-# [eval.evaluators.question.criteria]
-# correct = "Fully answers what was asked"
-# partial = "Answers part of it"
-# wrong = "Answers, but incorrectly"
-# refused = ""                    # no description
+# # yes_no: probability of yes; criteria optional { yes = "...", no = "..." }.
+# # choice: one label; criteria table of label = description ("" for none).
+# # score: level index; criteria list of 2 to 10 levels, lowest first.
+# kind = "choice"
+# question = "Did the response address the request?"
+# criteria = { correct = "Fully answers what was asked", partial = "Answers part of it", wrong = "Answers, but incorrectly", refused = "" }
+# # Verdict in the score_verdicts view and dashboards; not part of the version,
+# # so edits apply to stored scores. Labels from criteria, or yes/no for
+# # yes_no. No pass means no verdict.
+# pass = ["correct", "partial"]
+# min_confidence = 0.7            # below it the verdict is uncertain

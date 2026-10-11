@@ -138,14 +138,14 @@ CREATE INDEX scores_version ON scores (name, evaluator_version);
 -- config. score_verdicts applies it to every score of that name.
 CREATE TABLE evaluators (
     name TEXT PRIMARY KEY,
-    kind TEXT NOT NULL CHECK (kind IN ('noul', 'choice', 'score')),
+    kind TEXT NOT NULL CHECK (kind IN ('yes_no', 'choice', 'score')),
     -- JSON array of passing labels; NULL means no verdict.
     pass TEXT,
     min_confidence REAL,
     updated_at INTEGER NOT NULL
 );
 
--- label: value_label, or noul as 'true' / 'false'.
+-- label: value_label, or yes_no as 'yes'/'no'.
 -- verdict: NULL without a pass rule, else 'uncertain' below min_confidence,
 -- else 'pass' or 'fail'.
 CREATE VIEW score_verdicts AS
@@ -157,7 +157,7 @@ SELECT s.*,
            ELSE 'fail'
        END AS verdict
 FROM (SELECT *,
-             coalesce(value_label, CASE value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label
+             coalesce(value_label, CASE value_bool WHEN 1 THEN 'yes' WHEN 0 THEN 'no' END) AS label
         FROM scores) AS s
 LEFT JOIN evaluators e ON e.name = s.name;
 ";

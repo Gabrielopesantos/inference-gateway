@@ -1,4 +1,4 @@
-//! Renders an evaluator's `state` template from captured content, cut to
+//! Renders an evaluator's `input` template from captured content, cut to
 //! fit the judge's token budget.
 
 use std::collections::BTreeMap;
@@ -207,15 +207,15 @@ fn block(b: &Value) -> Option<String> {
     }
 }
 
-/// Chars available for the state: the token budget minus the question.
+/// Chars available for the input: the token budget minus the question.
 #[must_use]
-pub fn budget_chars(max_state_tokens: usize, name: &str, question: &Question) -> usize {
+pub fn budget_chars(max_input_tokens: usize, name: &str, question: &Question) -> usize {
     let question_chars = serde_json::to_string(question).map_or(0, |q| q.len()) + name.len();
     let question_tokens = question_chars.div_ceil(CHARS_PER_TOKEN);
-    max_state_tokens.saturating_sub(question_tokens) * CHARS_PER_TOKEN
+    max_input_tokens.saturating_sub(question_tokens) * CHARS_PER_TOKEN
 }
 
-/// Returns the state and whether any variable was cut. Over budget, the
+/// Returns the input and whether any variable was cut. Over budget, the
 /// oldest conversation messages go first; then the longest variables are
 /// cut in the middle, keeping head and tail, until the render fits.
 ///
@@ -566,7 +566,10 @@ mod tests {
 
     #[test]
     fn budget_subtracts_the_question() {
-        let q: Question = toml::from_str("type = \"noul\"\ninstructions = \"x\"\n").unwrap();
+        let q = Question::YesNo {
+            instructions: "x".into(),
+            criteria: None,
+        };
         let b = budget_chars(1000, "q", &q);
         assert!(b < 3000 && b > 2900, "{b}");
     }

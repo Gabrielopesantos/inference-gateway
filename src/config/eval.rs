@@ -1,4 +1,5 @@
-//! `[eval]`: the judge and the evaluators that score captured traces.
+//! `[eval]`: the worker, the judge and the evaluators that score captured
+//! traces.
 
 use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
@@ -14,6 +15,16 @@ use crate::capture::Match;
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvalFile {
+    #[serde(default)]
+    pub worker: WorkerFile,
+    pub judge: JudgeFile,
+    #[serde(default)]
+    pub evaluators: Vec<EvaluatorFile>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerFile {
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
     #[serde(default = "default_max_attempts")]
@@ -22,9 +33,17 @@ pub struct EvalFile {
     pub lease: Duration,
     #[serde(default = "default_poll", with = "humantime_serde")]
     pub poll: Duration,
-    pub judge: JudgeFile,
-    #[serde(default)]
-    pub evaluators: Vec<EvaluatorFile>,
+}
+
+impl Default for WorkerFile {
+    fn default() -> Self {
+        Self {
+            concurrency: default_concurrency(),
+            max_attempts: default_max_attempts(),
+            lease: default_lease(),
+            poll: default_poll(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,8 +52,8 @@ pub struct JudgeFile {
     pub base_url: String,
     pub model: String,
     pub api_key_env: String,
-    #[serde(default = "default_max_state_tokens")]
-    pub max_state_tokens: usize,
+    #[serde(default = "default_max_input_tokens")]
+    pub max_input_tokens: usize,
     #[serde(default = "default_timeout", with = "humantime_serde")]
     pub timeout: Duration,
     #[serde(default = "default_usd_per_mtok_input")]
@@ -49,35 +68,46 @@ pub struct EvaluatorFile {
     pub matcher: MatchFile,
     #[serde(default = "super::default_sample")]
     pub sample: f64,
-    pub state: String,
-    pub question: Question,
-    pub pass: Option<PassFile>,
+    pub input: String,
+    pub kind: Kind,
+    pub question: String,
+    pub criteria: Option<CriteriaFile>,
+    pub pass: Option<Vec<String>>,
     pub min_confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    YesNo,
+    Choice,
+    Score,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub enum PassFile {
-    /// noul: `yes` or `no`.
-    Answer(String),
-    /// choice and score: labels from `criteria`.
-    Labels(Vec<String>),
+pub enum CriteriaFile {
+    /// `yes_no` and `choice`: description per label.
+    Labels(BTreeMap<String, String>),
+    /// score: levels, lowest first.
+    Levels(Vec<String>),
 }
 
-/// Sent to the judge as is; also hashed into the evaluator version.
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+/// Judge wire shape, sent as is; also hashed into the evaluator version.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
 pub enum Question {
     /// Probability of yes.
-    Noul {
+    #[serde(rename = "noul")]
+    YesNo {
         instructions: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        criteria: Option<NoulCriteria>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        criteria: Option<YesNoCriteria>,
     },
     /// One label out of `criteria`.
     Choice {
         instructions: String,
-        /// Option → description; `""` is sent as `null` (TOML has no null).
+        /// Description per label; `""` is sent as `null` (TOML has no null).
         #[serde(serialize_with = "empty_as_null")]
         criteria: BTreeMap<String, String>,
     },
@@ -88,12 +118,11 @@ pub enum Question {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoulCriteria {
-    #[serde(rename = "true", default, skip_serializing_if = "Option::is_none")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YesNoCriteria {
+    #[serde(rename = "true", skip_serializing_if = "Option::is_none")]
     pub yes: Option<String>,
-    #[serde(rename = "false", default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "false", skip_serializing_if = "Option::is_none")]
     pub no: Option<String>,
 }
 
@@ -105,7 +134,7 @@ impl Question {
     #[must_use]
     pub fn kind(&self) -> &'static str {
         match self {
-            Self::Noul { .. } => "noul",
+            Self::YesNo { .. } => "yes_no",
             Self::Choice { .. } => "choice",
             Self::Score { .. } => "score",
         }
@@ -128,8 +157,8 @@ fn default_poll() -> Duration {
     Duration::from_secs(1)
 }
 
-/// Typesafe Jev's limit: state plus the longest question.
-fn default_max_state_tokens() -> usize {
+/// Typesafe Jev's limit: input plus the longest question.
+fn default_max_input_tokens() -> usize {
     32_000
 }
 
@@ -144,6 +173,13 @@ fn default_usd_per_mtok_input() -> f64 {
 
 #[derive(Debug, Clone)]
 pub struct EvalConfig {
+    pub worker: Worker,
+    pub judge: Judge,
+    pub evaluators: Vec<Evaluator>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Worker {
     /// Max jobs in flight, which is also max concurrent judge calls.
     pub concurrency: usize,
     pub max_attempts: u32,
@@ -151,8 +187,6 @@ pub struct EvalConfig {
     pub lease: Duration,
     /// Queue poll interval; new jobs from this process wake the worker sooner.
     pub poll: Duration,
-    pub judge: Judge,
-    pub evaluators: Vec<Evaluator>,
 }
 
 #[derive(Debug, Clone)]
@@ -163,7 +197,7 @@ pub struct Judge {
     pub model: String,
     /// Env var holding the key; read when the worker starts.
     pub api_key_env: String,
-    pub max_state_tokens: usize,
+    pub max_input_tokens: usize,
     pub timeout: Duration,
     pub usd_per_mtok_input: f64,
 }
@@ -175,14 +209,14 @@ pub struct Evaluator {
     /// Fraction of matching traces scored, in `[0, 1]`.
     pub sample: f64,
     /// minijinja template; compiled at validation.
-    pub state: String,
+    pub input: String,
     pub question: Question,
-    /// Score labels that pass, as stored (noul: `true` / `false`); `None`
+    /// Score labels that pass, as stored (`yes_no`: `yes`/`no`); `None`
     /// gives no verdict. Not part of the version.
     pub pass: Option<Vec<String>>,
     /// Below it the verdict is `uncertain`; every score is stored.
     pub min_confidence: Option<f64>,
-    /// Changes with the judge model, state template or question.
+    /// Changes with the judge model, input template or question.
     pub version: String,
 }
 
@@ -197,18 +231,19 @@ impl Evaluator {
 }
 
 pub(super) fn eval_config(file: EvalFile, upstreams: &[Upstream]) -> Result<EvalConfig> {
-    if file.concurrency == 0 {
-        bail!("eval.concurrency must be at least 1");
+    let w = file.worker;
+    if w.concurrency == 0 {
+        bail!("eval.worker.concurrency must be at least 1");
     }
-    if file.max_attempts == 0 {
-        bail!("eval.max_attempts must be at least 1");
+    if w.max_attempts == 0 {
+        bail!("eval.worker.max_attempts must be at least 1");
     }
     let j = file.judge;
     let judge = Judge {
         base_url: parse_base_url(&j.base_url).context("eval.judge.base_url")?,
         model: j.model,
         api_key_env: j.api_key_env,
-        max_state_tokens: j.max_state_tokens,
+        max_input_tokens: j.max_input_tokens,
         timeout: j.timeout,
         usd_per_mtok_input: j.usd_per_mtok_input,
     };
@@ -230,10 +265,12 @@ pub(super) fn eval_config(file: EvalFile, upstreams: &[Upstream]) -> Result<Eval
         })
         .collect::<Result<_>>()?;
     Ok(EvalConfig {
-        concurrency: file.concurrency,
-        max_attempts: file.max_attempts,
-        lease: file.lease,
-        poll: file.poll,
+        worker: Worker {
+            concurrency: w.concurrency,
+            max_attempts: w.max_attempts,
+            lease: w.lease,
+            poll: w.poll,
+        },
         judge,
         evaluators,
     })
@@ -250,72 +287,88 @@ fn evaluator(e: EvaluatorFile, model: &str, upstreams: &[Upstream]) -> Result<Ev
     {
         bail!("min_confidence must be in [0, 1], got {c}");
     }
-    match &e.question {
-        Question::Noul { .. } => {}
-        Question::Choice { criteria, .. } => {
-            if !(1..=255).contains(&criteria.len()) {
-                bail!("choice needs 1 to 255 criteria, got {}", criteria.len());
-            }
-        }
-        Question::Score { criteria, .. } => {
-            if !(2..=10).contains(&criteria.len()) {
-                bail!("score needs 2 to 10 criteria, got {}", criteria.len());
-            }
-        }
-    }
+    let question = question(e.kind, e.question, e.criteria).context("criteria")?;
     minijinja::Environment::new()
-        .template_from_str(&e.state)
-        .context("state template")?;
+        .template_from_str(&e.input)
+        .context("input template")?;
     let pass = e
         .pass
-        .map(|p| pass_labels(p, &e.question))
+        .map(|p| pass_labels(p, &question))
         .transpose()
         .context("pass")?;
-    let version = version(model, &e.state, &e.question)?;
+    let version = version(model, &e.input, &question)?;
     Ok(Evaluator {
         name: e.name,
         matcher,
         sample: e.sample,
-        state: e.state,
-        question: e.question,
+        input: e.input,
+        question,
         pass,
         min_confidence: e.min_confidence,
         version,
     })
 }
 
-fn pass_labels(pass: PassFile, question: &Question) -> Result<Vec<String>> {
-    let labels = match (question, pass) {
-        (Question::Noul { .. }, PassFile::Answer(a)) => match a.as_str() {
-            "yes" => return Ok(vec!["true".into()]),
-            "no" => return Ok(vec!["false".into()]),
-            _ => bail!("noul takes \"yes\" or \"no\", got {a:?}"),
+fn question(kind: Kind, instructions: String, criteria: Option<CriteriaFile>) -> Result<Question> {
+    Ok(match (kind, criteria) {
+        (Kind::YesNo, None) => Question::YesNo {
+            instructions,
+            criteria: None,
         },
-        (Question::Noul { .. }, PassFile::Labels(_)) => {
-            bail!("noul takes \"yes\" or \"no\", not a list")
+        (Kind::YesNo, Some(CriteriaFile::Labels(mut m))) => {
+            let (yes, no) = (m.remove("yes"), m.remove("no"));
+            if let Some(k) = m.keys().next() {
+                bail!("yes_no takes yes and no, got {k:?}");
+            }
+            Question::YesNo {
+                instructions,
+                criteria: Some(YesNoCriteria { yes, no }),
+            }
         }
-        (q, PassFile::Answer(_)) => bail!("{} takes a list of criteria", q.kind()),
-        (_, PassFile::Labels(l)) => l,
-    };
+        (Kind::Choice, Some(CriteriaFile::Labels(criteria))) => {
+            if !(1..=255).contains(&criteria.len()) {
+                bail!("choice needs 1 to 255 criteria, got {}", criteria.len());
+            }
+            Question::Choice {
+                instructions,
+                criteria,
+            }
+        }
+        (Kind::Score, Some(CriteriaFile::Levels(criteria))) => {
+            if !(2..=10).contains(&criteria.len()) {
+                bail!("score needs 2 to 10 criteria, got {}", criteria.len());
+            }
+            Question::Score {
+                instructions,
+                criteria,
+            }
+        }
+        (Kind::YesNo, Some(CriteriaFile::Levels(_))) => bail!("yes_no takes a table"),
+        (Kind::Choice, _) => bail!("choice needs a table"),
+        (Kind::Score, _) => bail!("score needs a list of levels"),
+    })
+}
+
+fn pass_labels(labels: Vec<String>, question: &Question) -> Result<Vec<String>> {
     if labels.is_empty() {
         bail!("empty list");
     }
     for l in &labels {
         let known = match question {
+            Question::YesNo { .. } => l == "yes" || l == "no",
             Question::Choice { criteria, .. } => criteria.contains_key(l),
             Question::Score { criteria, .. } => criteria.contains(l),
-            Question::Noul { .. } => false,
         };
         if !known {
-            bail!("{l:?} is not in criteria");
+            bail!("{l:?} is not a {} label", question.kind());
         }
     }
     Ok(labels)
 }
 
-fn version(model: &str, state: &str, question: &Question) -> Result<String> {
+fn version(model: &str, input: &str, question: &Question) -> Result<String> {
     let mut h = Sha256::new();
-    for part in [model, state, &serde_json::to_string(question)?] {
+    for part in [model, input, &serde_json::to_string(question)?] {
         // Length-prefixed, so moving text between parts changes the hash.
         h.update((part.len() as u64).to_be_bytes());
         h.update(part);
@@ -347,15 +400,10 @@ api_key_env = "IG_JUDGE_API_KEY"
     const CHOICE: &str = r#"
 [[eval.evaluators]]
 name = "answered"
-state = "<user>{{ last_user_message }}</user>"
-
-[eval.evaluators.question]
-type = "choice"
-instructions = "Did it answer?"
-
-[eval.evaluators.question.criteria]
-yes = "Fully"
-no = ""
+input = "<user>{{ last_user_message }}</user>"
+kind = "choice"
+question = "Did it answer?"
+criteria = { yes = "Fully", no = "" }
 "#;
 
     fn parse(extra: &str) -> Result<EvalConfig> {
@@ -366,17 +414,34 @@ no = ""
         format!("{:#}", parse(extra).unwrap_err())
     }
 
+    fn one(fields: &str) -> String {
+        format!("[[eval.evaluators]]\nname = \"e\"\ninput = \"x\"\nquestion = \"i\"\n{fields}\n")
+    }
+
     #[test]
     fn parses_with_defaults() {
         let c = parse(CHOICE).unwrap();
-        assert_eq!(c.concurrency, 4);
-        assert_eq!(c.max_attempts, 5);
-        assert_eq!(c.lease, Duration::from_mins(5));
-        assert_eq!(c.judge.max_state_tokens, 32_000);
+        assert_eq!(c.worker.concurrency, 4);
+        assert_eq!(c.worker.max_attempts, 5);
+        assert_eq!(c.worker.lease, Duration::from_mins(5));
+        assert_eq!(c.judge.max_input_tokens, 32_000);
         let e = &c.evaluators[0];
         assert_eq!(e.question.kind(), "choice");
         assert!((e.sample - 1.0).abs() < f64::EPSILON);
         assert_eq!(e.version.len(), 16);
+    }
+
+    #[test]
+    fn worker_section_overrides_defaults() {
+        let c = parse(&format!(
+            "[eval.worker]\nconcurrency = 2\nlease = \"1m\"\n{CHOICE}"
+        ))
+        .unwrap();
+        assert_eq!(c.worker.concurrency, 2);
+        assert_eq!(c.worker.lease, Duration::from_mins(1));
+        assert_eq!(c.worker.max_attempts, 5);
+        let e = err(&format!("[eval.worker]\nconcurrency = 0\n{CHOICE}"));
+        assert!(e.contains("eval.worker.concurrency"), "{e}");
     }
 
     #[test]
@@ -391,12 +456,15 @@ no = ""
                 "criteria": {"no": null, "yes": "Fully"},
             })
         );
-        let q: Question =
-            toml::from_str("type = \"noul\"\ninstructions = \"x\"\ncriteria = { true = \"y\" }\n")
-                .unwrap();
+        let c = parse(&one("kind = \"yes_no\"\ncriteria = { yes = \"y\" }")).unwrap();
         assert_eq!(
-            serde_json::to_value(&q).unwrap(),
-            serde_json::json!({"type": "noul", "instructions": "x", "criteria": {"true": "y"}})
+            serde_json::to_value(&c.evaluators[0].question).unwrap(),
+            serde_json::json!({"type": "noul", "instructions": "i", "criteria": {"true": "y"}})
+        );
+        let c = parse(&one("kind = \"yes_no\"")).unwrap();
+        assert_eq!(
+            serde_json::to_value(&c.evaluators[0].question).unwrap(),
+            serde_json::json!({"type": "noul", "instructions": "i"})
         );
     }
 
@@ -415,24 +483,42 @@ no = ""
             "{e}"
         );
 
-        let score = |levels: &str| {
-            err(&format!(
-                "[[eval.evaluators]]\nname = \"s\"\nstate = \"x\"\n\n[eval.evaluators.question]\ntype = \"score\"\ninstructions = \"i\"\ncriteria = {levels}\n"
-            ))
-        };
-        assert!(score("[\"one\"]").contains("score needs 2 to 10"));
-        assert!(score(&format!("{:?}", vec!["l"; 11])).contains("score needs 2 to 10"));
-
-        let e = err(
-            "[[eval.evaluators]]\nname = \"c\"\nstate = \"x\"\nquestion = { type = \"choice\", instructions = \"i\", criteria = {} }\n",
-        );
-        assert!(
-            e.contains(r#"eval.evaluators[0] "c": choice needs 1 to 255"#),
-            "{e}"
-        );
+        let eleven = format!("kind = \"score\"\ncriteria = {:?}", vec!["l"; 11]);
+        for (fields, msg) in [
+            (
+                "kind = \"score\"\ncriteria = [\"one\"]",
+                "score needs 2 to 10",
+            ),
+            (eleven.as_str(), "score needs 2 to 10"),
+            (
+                "kind = \"score\"\ncriteria = { a = \"\" }",
+                "score needs a list",
+            ),
+            ("kind = \"score\"", "score needs a list"),
+            ("kind = \"choice\"\ncriteria = {}", "choice needs 1 to 255"),
+            (
+                "kind = \"choice\"\ncriteria = [\"a\"]",
+                "choice needs a table",
+            ),
+            ("kind = \"choice\"", "choice needs a table"),
+            (
+                "kind = \"yes_no\"\ncriteria = { true = \"\" }",
+                r#"yes_no takes yes and no, got "true""#,
+            ),
+            (
+                "kind = \"yes_no\"\ncriteria = [\"a\"]",
+                "yes_no takes a table",
+            ),
+        ] {
+            let e = err(&one(fields));
+            assert!(
+                e.contains(&format!(r#"eval.evaluators[0] "e": criteria: {msg}"#)),
+                "{fields}: {e}"
+            );
+        }
 
         let e = err(&CHOICE.replace("{{ last_user_message }}", "{{ unclosed"));
-        assert!(e.contains("state template"), "{e}");
+        assert!(e.contains("input template"), "{e}");
 
         let e = err(&CHOICE.replace("name = \"answered\"", "name = \"a b\""));
         assert!(e.contains("name"), "{e}");
@@ -445,7 +531,7 @@ no = ""
     }
 
     #[test]
-    fn pass_maps_to_stored_labels() {
+    fn pass_labels_are_checked() {
         let with = |pass: &str| {
             parse(&CHOICE.replace(
                 "name = \"answered\"\n",
@@ -461,36 +547,32 @@ no = ""
         );
 
         for (pass, msg) in [
-            ("[\"maybe\"]", r#""maybe" is not in criteria"#),
+            ("[\"maybe\"]", r#""maybe" is not a choice label"#),
             ("[]", "empty list"),
-            ("\"yes\"", "choice takes a list"),
         ] {
             let e = format!("{:#}", with(pass).unwrap_err());
             assert!(e.contains(&format!("pass: {msg}")), "{pass}: {e}");
         }
+        assert!(format!("{:#}", with("\"yes\"").unwrap_err()).contains("pass"));
 
-        let noul = |pass: &str| {
-            parse(&format!(
-                "[[eval.evaluators]]\nname = \"n\"\nstate = \"x\"\npass = {pass}\nquestion = {{ type = \"noul\", instructions = \"i\" }}\n"
-            ))
-        };
+        let yes_no = |pass: &str| parse(&one(&format!("kind = \"yes_no\"\npass = {pass}")));
         assert_eq!(
-            noul("\"no\"").unwrap().evaluators[0].pass,
-            Some(vec!["false".to_owned()])
+            yes_no("[\"no\"]").unwrap().evaluators[0].pass,
+            Some(vec!["no".to_owned()])
         );
-        assert!(format!("{:#}", noul("\"true\"").unwrap_err()).contains("noul takes"));
-        assert!(format!("{:#}", noul("[\"yes\"]").unwrap_err()).contains("not a list"));
+        let e = format!("{:#}", yes_no("[\"true\"]").unwrap_err());
+        assert!(e.contains(r#""true" is not a yes_no label"#), "{e}");
 
-        let score = parse(
-            "[[eval.evaluators]]\nname = \"s\"\nstate = \"x\"\npass = [\"good\"]\nquestion = { type = \"score\", instructions = \"i\", criteria = [\"bad\", \"good\"] }\n",
-        )
+        let score = parse(&one(
+            "kind = \"score\"\ncriteria = [\"bad\", \"good\"]\npass = [\"good\"]",
+        ))
         .unwrap();
         assert_eq!(score.evaluators[0].pass, Some(vec!["good".to_owned()]));
     }
 
     #[test]
-    fn unknown_question_type_reports_line() {
-        let e = err(&CHOICE.replace("type = \"choice\"", "type = \"rank\""));
+    fn unknown_kind_reports_line() {
+        let e = err(&CHOICE.replace("kind = \"choice\"", "kind = \"rank\""));
         assert!(e.contains("rank"), "{e}");
         assert!(e.contains("line"), "{e}");
     }

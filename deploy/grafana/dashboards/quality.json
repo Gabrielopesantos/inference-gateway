@@ -548,7 +548,7 @@
     },
     {
       "type": "timeseries",
-      "title": "noul P(yes) by model and evaluator version",
+      "title": "yes_no P(yes) by model and evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
@@ -659,7 +659,7 @@
     {
       "type": "histogram",
       "title": "Confidence",
-      "description": "choice and score answers; noul has none",
+      "description": "choice and score answers; yes_no has none",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"

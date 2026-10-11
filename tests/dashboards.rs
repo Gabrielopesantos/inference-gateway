@@ -37,7 +37,7 @@ fn seed(conn: &Connection) {
 
     conn.execute_batch(
         r#"INSERT INTO evaluators (name, kind, pass, min_confidence, updated_at) VALUES
-             ('refused', 'noul', '["false"]', NULL, 0),
+             ('refused', 'yes_no', '["no"]', NULL, 0),
              ('answered', 'choice', '["correct","partial"]', 0.7, 0);
            INSERT INTO eval_jobs (trace_id, evaluator, evaluator_version, status, attempts,
                                   not_before, last_error, created_at)

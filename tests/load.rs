@@ -145,7 +145,7 @@ async fn measure(eval: bool) -> (Stats, u64, u64) {
     let judge = MockUpstream::start(slow).await;
     let section = format!(
         r#"
-[eval]
+[eval.worker]
 concurrency = 4
 poll = "50ms"
 
@@ -156,11 +156,10 @@ api_key_env = "IG_TEST_UNUSED"
 
 [[eval.evaluators]]
 name = "q"
-state = "{{{{ last_user_message }}}} {{{{ output_text }}}}"
+input = "{{{{ last_user_message }}}} {{{{ output_text }}}}"
 
-[eval.evaluators.question]
-type = "choice"
-instructions = "Did the response address the request?"
+kind = "choice"
+question = "Did the response address the request?"
 criteria = {{ correct = "Fully answers", partial = "Answers part", wrong = "" }}
 "#,
         judge.base_url()

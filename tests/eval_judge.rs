@@ -28,26 +28,19 @@ const KEY: &str = "judge-test-key";
 const GRACE: Duration = Duration::from_secs(5);
 
 const CHOICE_Q: &str = r#"
-[eval.evaluators.question]
-type = "choice"
-instructions = "Did the response address the request?"
-
-[eval.evaluators.question.criteria]
-correct = "Fully answers"
-partial = "Answers part"
-wrong = ""
+kind = "choice"
+question = "Did the response address the request?"
+criteria = { correct = "Fully answers", partial = "Answers part", wrong = "" }
 "#;
 
-const NOUL_Q: &str = r#"
-[eval.evaluators.question]
-type = "noul"
-instructions = "Is the response polite?"
+const YES_NO_Q: &str = r#"
+kind = "yes_no"
+question = "Is the response polite?"
 "#;
 
 const SCORE_Q: &str = r#"
-[eval.evaluators.question]
-type = "score"
-instructions = "How helpful is the response?"
+kind = "score"
+question = "How helpful is the response?"
 criteria = ["bad", "ok", "great"]
 "#;
 
@@ -58,7 +51,7 @@ const STATE: &str = "<user>{{ last_user_message }}</user><response>{{ output_tex
 fn eval_section(judge: &str, eval: &str, state: &str, question: &str) -> String {
     format!(
         r#"
-[eval]
+[eval.worker]
 poll = "50ms"
 {eval}
 
@@ -69,7 +62,7 @@ api_key_env = "IG_TEST_UNUSED"
 
 [[eval.evaluators]]
 name = "q"
-state = """{state}"""
+input = """{state}"""
 {question}
 "#
     )
@@ -214,8 +207,8 @@ async fn choice_answer_becomes_a_score_row() {
 }
 
 #[tokio::test]
-async fn noul_answer_sets_bool_and_probability() {
-    let (dir, _judge) = scored(NOUL, NOUL_Q).await;
+async fn yes_no_answer_sets_bool_and_probability() {
+    let (dir, _judge) = scored(NOUL, YES_NO_Q).await;
     let conn = reader(&dir.path().join("g.db"));
     let (data_type, b, label, num, confidence): (
         String,
@@ -355,7 +348,7 @@ async fn over_budget_state_is_truncated() {
     let section = eval_section(&judge.base_url(), "", "<r>{{ output_text }}</r>", CHOICE_Q)
         .replace(
             "model = \"jev-1.13.0\"",
-            "model = \"jev-1.13.0\"\nmax_state_tokens = 60",
+            "model = \"jev-1.13.0\"\nmax_input_tokens = 60",
         );
     let gw = gateway(&db, &upstream, &section).await;
     post(&gw).await;
@@ -514,17 +507,17 @@ async fn real_judge_scores_a_trace() {
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
     let mut extra = format!(
-        "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval]\npoll = \"50ms\"\n\n[eval.judge]\nbase_url = \"https://api.typesafe.ai\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_JUDGE_API_KEY\"\n",
+        "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval.worker]\npoll = \"50ms\"\n\n[eval.judge]\nbase_url = \"https://api.typesafe.ai\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_JUDGE_API_KEY\"\n",
         db.display()
     );
     for (name, question) in [
-        ("polite", NOUL_Q),
+        ("polite", YES_NO_Q),
         ("answered", CHOICE_Q),
         ("helpful", SCORE_Q),
     ] {
         write!(
             extra,
-            "\n[[eval.evaluators]]\nname = \"{name}\"\nstate = \"\"\"{STATE}\"\"\"\n{question}"
+            "\n[[eval.evaluators]]\nname = \"{name}\"\ninput = \"\"\"{STATE}\"\"\"\n{question}"
         )
         .unwrap();
     }
@@ -607,7 +600,7 @@ async fn tool_turn_state_shows_the_tool_calls() {
         &judge.base_url(),
         "",
         "<stop>{{ stop_reason }}</stop><calls>{{ tool_calls }}</calls>",
-        NOUL_Q,
+        YES_NO_Q,
     )
     .replace(
         "name = \"q\"\n",
@@ -635,17 +628,16 @@ const NEXT_STEP: &str = r#"
 [[eval.evaluators]]
 name = "next_step"
 match = { stop_reason = ["tool_use"] }
-state = """
+input = """
 <request>{{ last_user_message }}</request>
 <recent_conversation>{{ conversation }}</recent_conversation>
 <next_tool_calls>{{ tool_calls }}</next_tool_calls>
 """
 
-[eval.evaluators.question]
-type = "choice"
-instructions = "Given the request and the conversation so far, is the next tool call a sensible step toward fulfilling the request?"
+kind = "choice"
+question = "Given the request and the conversation so far, is the next tool call a sensible step toward fulfilling the request?"
 
-[eval.evaluators.question.criteria]
+[eval.evaluators.criteria]
 good = "A sensible, well-aimed next step"
 questionable = "Plausible, but redundant, risky or poorly aimed"
 wrong = "Does not help with the request, or is harmful"
@@ -672,7 +664,7 @@ async fn real_judge_next_step_flags_bad_calls() {
     let cfg = Config::parse(&config(
         &[("anthropic", "anthropic", "http://x")],
         &format!(
-            "[store]\npath = \"g.db\"\n\n[eval]\n\n[eval.judge]\nbase_url = \"https://api.typesafe.ai\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_JUDGE_API_KEY\"\n{NEXT_STEP}"
+            "[store]\npath = \"g.db\"\n\n[eval.judge]\nbase_url = \"https://api.typesafe.ai\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_JUDGE_API_KEY\"\n{NEXT_STEP}"
         ),
     ))
     .unwrap()
@@ -721,7 +713,7 @@ src/config/cli.rs]"#;
             &["questionable", "wrong"],
         ),
     ];
-    let budget = template::budget_chars(cfg.judge.max_state_tokens, &e.name, &e.question);
+    let budget = template::budget_chars(cfg.judge.max_input_tokens, &e.name, &e.question);
     let mut misses = Vec::new();
     for (case, request, conversation, call, allowed) in cases {
         let vars = Vars {
@@ -731,7 +723,7 @@ src/config/cli.rs]"#;
             stop_reason: "tool_use".into(),
             ..Vars::default()
         };
-        let (state, _) = template::render(&e.state, &vars, budget).unwrap();
+        let (state, _) = template::render(&e.input, &vars, budget).unwrap();
         let d = judge.ask(&e.name, &state, &e.question).await.unwrap();
         let label = d.verdict.label().to_owned();
         println!(

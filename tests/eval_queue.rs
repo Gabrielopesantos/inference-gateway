@@ -146,22 +146,27 @@ api_key_env = "K"
 
 [[eval.evaluators]]
 name = "refused"
-state = "x"
-pass = "no"
-question = {{ type = "noul", instructions = "Refused?" }}
+input = "x"
+pass = ["no"]
+kind = "yes_no"
+question = "Refused?"
 
 [[eval.evaluators]]
 name = "answered"
-state = "x"
+input = "x"
 min_confidence = 0.7
 {pass}
-question = {{ type = "choice", instructions = "Answered?", criteria = {{ correct = "", partial = "", wrong = "" }} }}
+kind = "choice"
+question = "Answered?"
+criteria = {{ correct = "", partial = "", wrong = "" }}
 
 [[eval.evaluators]]
 name = "level"
-state = "x"
+input = "x"
 pass = ["good"]
-question = {{ type = "score", instructions = "Level?", criteria = ["bad", "good"] }}
+kind = "score"
+question = "Level?"
+criteria = ["bad", "good"]
 "#
             ),
         ))
@@ -220,8 +225,8 @@ question = {{ type = "score", instructions = "Level?", criteria = ["bad", "good"
     assert_eq!(
         verdicts(&conn),
         expect(&[
-            ("false", Some("pass")),
-            ("true", Some("fail")),
+            ("no", Some("pass")),
+            ("yes", Some("fail")),
             ("partial", Some("pass")),
             ("wrong", Some("fail")),
             ("correct", Some("uncertain")),
@@ -270,7 +275,7 @@ capture = false
 
 [[capture.rules]]
 
-[eval]
+[eval.worker]
 poll = "1h"
 
 [eval.judge]
@@ -281,14 +286,16 @@ api_key_env = "IG_TEST_UNUSED"
 [[eval.evaluators]]
 name = "tagged"
 match = {{ tags = {{ project = "ig" }} }}
-state = "{{{{ output_text }}}}"
-question = {{ type = "noul", instructions = "?" }}
+input = "{{{{ output_text }}}}"
+kind = "yes_no"
+question = "?"
 
 [[eval.evaluators]]
 name = "never"
 sample = 0.0
-state = "x"
-question = {{ type = "noul", instructions = "?" }}
+input = "x"
+kind = "yes_no"
+question = "?"
 "#,
         db.display(),
         unreachable_addr()
@@ -356,18 +363,20 @@ async fn evaluators_select_by_stop_reason() {
 [[eval.evaluators]]
 name = "answer"
 match = { stop_reason = ["end_turn"] }
-state = "{{ output_text }}"
-question = { type = "noul", instructions = "?" }
+input = "{{ output_text }}"
+kind = "yes_no"
+question = "?"
 
 [[eval.evaluators]]
 name = "tool"
 match = { stop_reason = ["tool_use"] }
-state = "{{ tool_calls }}"
-question = { type = "noul", instructions = "?" }
+input = "{{ tool_calls }}"
+kind = "yes_no"
+question = "?"
 "#;
     let section = |evaluators: &str| {
         format!(
-            "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval]\npoll = \"1h\"\n\n[eval.judge]\nbase_url = \"http://{}\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_TEST_UNUSED\"\n{evaluators}",
+            "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval.worker]\npoll = \"1h\"\n\n[eval.judge]\nbase_url = \"http://{}\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_TEST_UNUSED\"\n{evaluators}",
             db.display(),
             unreachable_addr()
         )
@@ -427,8 +436,8 @@ question = { type = "noul", instructions = "?" }
     let cfg = inference_gateway::config::Config::parse(&config(
         &[("text", "anthropic", "http://x")],
         &section(&evaluators.replace(
-            "match = { stop_reason = [\"tool_use\"] }\nstate = \"{{ tool_calls }}\"",
-            "match = { stop_reason = [\"tool_use\", \"end_turn\"] }\nstate = \"{{ stop_reason }} {{ tool_calls }}\"",
+            "match = { stop_reason = [\"tool_use\"] }\ninput = \"{{ tool_calls }}\"",
+            "match = { stop_reason = [\"tool_use\", \"end_turn\"] }\ninput = \"{{ stop_reason }} {{ tool_calls }}\"",
         )),
     ))
     .unwrap();
@@ -449,18 +458,20 @@ async fn evaluators_select_by_structured_output() {
 [[eval.evaluators]]
 name = "plain"
 match = { structured_output = false }
-state = "{{ output_text }}"
-question = { type = "noul", instructions = "?" }
+input = "{{ output_text }}"
+kind = "yes_no"
+question = "?"
 
 [[eval.evaluators]]
 name = "json"
 match = { structured_output = true }
-state = "{{ output_text }}"
-question = { type = "noul", instructions = "?" }
+input = "{{ output_text }}"
+kind = "yes_no"
+question = "?"
 "#;
     let section = |evaluators: &str| {
         format!(
-            "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval]\npoll = \"1h\"\n\n[eval.judge]\nbase_url = \"http://{}\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_TEST_UNUSED\"\n{evaluators}",
+            "[store]\npath = \"{}\"\n\n[capture]\n\n[[capture.rules]]\n\n[eval.worker]\npoll = \"1h\"\n\n[eval.judge]\nbase_url = \"http://{}\"\nmodel = \"jev-1.13.0\"\napi_key_env = \"IG_TEST_UNUSED\"\n{evaluators}",
             db.display(),
             unreachable_addr()
         )

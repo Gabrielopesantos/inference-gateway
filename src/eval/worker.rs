@@ -1,4 +1,4 @@
-//! Claims jobs, renders state, asks the judge and stores the score. One
+//! Claims jobs, renders input, asks the judge and stores the score. One
 //! claim loop; at most `concurrency` jobs in flight.
 
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ pub struct Worker {
     max_attempts: u32,
     lease: Duration,
     poll: Duration,
-    max_state_tokens: usize,
+    max_input_tokens: usize,
     metrics: Metrics,
 }
 
@@ -60,11 +60,11 @@ impl Worker {
                 .map(|e| (e.name.clone(), e.clone()))
                 .collect(),
             versions: cfg.evaluators.iter().map(|e| e.version.clone()).collect(),
-            concurrency: cfg.concurrency,
-            max_attempts: cfg.max_attempts,
-            lease: cfg.lease,
-            poll: cfg.poll,
-            max_state_tokens: cfg.judge.max_state_tokens,
+            concurrency: cfg.worker.concurrency,
+            max_attempts: cfg.worker.max_attempts,
+            lease: cfg.worker.lease,
+            poll: cfg.worker.poll,
+            max_input_tokens: cfg.judge.max_input_tokens,
             metrics,
         })
     }
@@ -217,11 +217,11 @@ impl Worker {
         else {
             return Attempt::fail("config", "evaluator version not configured");
         };
-        let budget = template::budget_chars(self.max_state_tokens, &e.name, &e.question);
+        let budget = template::budget_chars(self.max_input_tokens, &e.name, &e.question);
         let (store, trace_id, template, id) = (
             self.store.clone(),
             job.trace_id.clone(),
-            e.state.clone(),
+            e.input.clone(),
             job.id,
         );
         // Content can be megabytes: load and render off the async runtime,
@@ -280,7 +280,7 @@ enum Prepared {
     BadTemplate(String),
 }
 
-/// Loads the trace and renders the state. Blocking.
+/// Loads the trace and renders the input. Blocking.
 fn prepare(
     store: &Store,
     trace_id: &[u8],
@@ -308,7 +308,7 @@ fn prepare(
             truncated,
             model: meta.model,
         },
-        Err(err) => Prepared::BadTemplate(format!("state template: {err:#}")),
+        Err(err) => Prepared::BadTemplate(format!("input template: {err:#}")),
     })
 }
 

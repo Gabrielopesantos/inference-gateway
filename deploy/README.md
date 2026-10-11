@@ -34,7 +34,7 @@ requests are stored with content and can be scored.
 | `grafana/provisioning/datasources/datasources.yaml` | Prometheus, Tempo, Loki, Pyroscope (otel-lgtm's uids) and the gateway SQLite store |
 | `grafana/dashboards/*.json` | provisioned dashboards |
 
-Evaluation is off until the `[eval]` section in `gateway.toml` is uncommented
+Evaluation is off until the `[eval.*]` sections in `gateway.toml` are uncommented
 and `IG_JUDGE_API_KEY` is set in `deploy/.env`.
 
 ## Gateway on the host

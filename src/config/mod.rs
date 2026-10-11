@@ -480,6 +480,26 @@ mod tests {
         assert_eq!(cfg.upstreams[1].provider, ProviderKind::Openai);
     }
 
+    /// The commented-out eval sections, uncommented.
+    fn with_eval(text: &str) -> String {
+        let (head, eval) = text.split_at(text.find("# [eval.").unwrap());
+        let mut out = head.to_owned();
+        for l in eval.lines() {
+            out.push_str(l.strip_prefix("# ").unwrap_or(l.trim_start_matches('#')));
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn example_eval_sections_are_valid() {
+        let deploy = include_str!("../../deploy/gateway.toml");
+        for text in [EXAMPLE, deploy] {
+            let eval = Config::parse(&with_eval(text)).unwrap().eval.unwrap();
+            assert!(!eval.evaluators.is_empty());
+        }
+    }
+
     #[test]
     fn ingress_defaults_when_absent() {
         let cfg = Config::parse(

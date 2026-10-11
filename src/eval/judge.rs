@@ -38,7 +38,7 @@ impl fmt::Debug for Judge {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decision {
     pub verdict: Verdict,
-    /// `None` for noul: the judge returns none.
+    /// `None` for `yes_no`: the judge returns none.
     pub confidence: Option<f64>,
     pub distribution: BTreeMap<String, f64>,
     /// The version that answered, e.g. `jev-1.13.0` for `jev-latest`.
@@ -51,7 +51,7 @@ pub struct Decision {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Verdict {
     /// Probability of yes.
-    Noul(f64),
+    YesNo(f64),
     Choice(String),
     /// Probability-weighted level index, and the most probable level's legend.
     Score {
@@ -64,7 +64,7 @@ impl Verdict {
     #[must_use]
     pub fn data_type(&self) -> &'static str {
         match self {
-            Self::Noul(_) => "bool",
+            Self::YesNo(_) => "bool",
             Self::Choice(_) => "categorical",
             Self::Score { .. } => "numeric",
         }
@@ -73,7 +73,7 @@ impl Verdict {
     #[must_use]
     pub fn value_bool(&self) -> Option<bool> {
         match self {
-            Self::Noul(p) => Some(*p >= 0.5),
+            Self::YesNo(p) => Some(*p >= 0.5),
             _ => None,
         }
     }
@@ -81,7 +81,7 @@ impl Verdict {
     #[must_use]
     pub fn value_label(&self) -> Option<&str> {
         match self {
-            Self::Noul(_) => None,
+            Self::YesNo(_) => None,
             Self::Choice(l) | Self::Score { label: l, .. } => Some(l),
         }
     }
@@ -89,18 +89,18 @@ impl Verdict {
     #[must_use]
     pub fn value_num(&self) -> Option<f64> {
         match self {
-            Self::Noul(p) => Some(*p),
+            Self::YesNo(p) => Some(*p),
             Self::Choice(_) => None,
             Self::Score { value, .. } => Some(*value),
         }
     }
 
-    /// Metric label: noul as `true` / `false`.
+    /// Metric label: `yes_no` as `yes`/`no`.
     #[must_use]
     pub fn label(&self) -> &str {
         match self.value_bool() {
-            Some(true) => "true",
-            Some(false) => "false",
+            Some(true) => "yes",
+            Some(false) => "no",
             None => self.value_label().unwrap_or_default(),
         }
     }
@@ -315,10 +315,10 @@ fn validate(raw: &serde_json::Value, question: &Question) -> Result<Validated, J
             .try_for_each(|(k, v)| unit(&format!("probability of {k:?}"), *v))
     };
     match (answer, question) {
-        (Answer::Noul { noul }, Question::Noul { .. }) => {
+        (Answer::Noul { noul }, Question::YesNo { .. }) => {
             unit("noul", noul)?;
-            let dist = BTreeMap::from([("true".into(), noul), ("false".into(), 1.0 - noul)]);
-            Ok((Verdict::Noul(noul), None, dist))
+            let dist = BTreeMap::from([("yes".into(), noul), ("no".into(), 1.0 - noul)]);
+            Ok((Verdict::YesNo(noul), None, dist))
         }
         (
             Answer::Choice {
@@ -377,7 +377,7 @@ fn validate(raw: &serde_json::Value, question: &Question) -> Result<Validated, J
         (a, q) => Err(JudgeError::invalid(format!(
             "answer type {} for a {} question",
             match a {
-                Answer::Noul { .. } => "noul",
+                Answer::Noul { .. } => "yes_no",
                 Answer::Choice { .. } => "choice",
                 Answer::Score { .. } => "score",
             },
@@ -401,24 +401,27 @@ mod tests {
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
     }
 
-    fn question(toml_text: &str) -> Question {
-        toml::from_str(toml_text).unwrap()
-    }
-
     fn choice() -> Question {
-        question(
-            "type = \"choice\"\ninstructions = \"i\"\n[criteria]\ncorrect = \"a\"\npartial = \"b\"\nwrong = \"\"\n",
-        )
+        Question::Choice {
+            instructions: "i".into(),
+            criteria: [("correct", "a"), ("partial", "b"), ("wrong", "")]
+                .map(|(k, v)| (k.into(), v.into()))
+                .into(),
+        }
     }
 
     fn score() -> Question {
-        question(
-            "type = \"score\"\ninstructions = \"i\"\ncriteria = [\"bad\", \"ok\", \"great\"]\n",
-        )
+        Question::Score {
+            instructions: "i".into(),
+            criteria: vec!["bad".into(), "ok".into(), "great".into()],
+        }
     }
 
-    fn noul() -> Question {
-        question("type = \"noul\"\ninstructions = \"i\"\n")
+    fn yes_no() -> Question {
+        Question::YesNo {
+            instructions: "i".into(),
+            criteria: None,
+        }
     }
 
     fn answer(fixture_name: &str) -> Value {
@@ -435,13 +438,13 @@ mod tests {
     }
 
     #[test]
-    fn noul_maps_to_bool_and_probability() {
-        let (v, conf, dist) = validate(&answer("noul"), &noul()).unwrap();
+    fn yes_no_maps_to_bool_and_probability() {
+        let (v, conf, dist) = validate(&answer("noul"), &yes_no()).unwrap();
         assert_eq!(v.value_bool(), Some(true));
         assert_eq!(v.value_num(), Some(0.99));
-        assert_eq!(v.label(), "true");
+        assert_eq!(v.label(), "yes");
         assert_eq!(conf, None);
-        assert!((dist["false"] - 0.01).abs() < 1e-9);
+        assert!((dist["no"] - 0.01).abs() < 1e-9);
     }
 
     #[test]
@@ -494,9 +497,9 @@ mod tests {
         );
 
         let e = validate(&answer("noul"), &choice()).unwrap_err();
-        assert!(e.message.contains("answer type noul for a choice"), "{e}");
+        assert!(e.message.contains("answer type yes_no for a choice"), "{e}");
 
-        let e = validate(&serde_json::json!({"type": "noul"}), &noul()).unwrap_err();
+        let e = validate(&serde_json::json!({"type": "noul"}), &yes_no()).unwrap_err();
         assert!(e.retryable);
     }
 
