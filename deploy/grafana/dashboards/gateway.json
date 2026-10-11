@@ -90,13 +90,17 @@
       "type": "stat",
       "title": "Requests",
       "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
       },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
         },
         "overrides": []
       },
@@ -104,29 +108,82 @@
         {
           "refId": "A",
           "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
           },
-          "expr": "sum(increase(gateway_requests_total{upstream=~\"$upstream\", model=~\"$model\"}[$__range]))",
-          "legendFormat": ""
+          "queryType": "time series",
+          "rawQueryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
+          "queryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
         }
       ],
       "options": {
         "reduceOptions": {
           "calcs": [
-            "lastNotNull"
+            "sum"
           ]
         },
         "colorMode": "none",
-        "graphMode": "none"
+        "graphMode": "area"
       },
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
-      "id": 2
+      "id": 26
+    },
+    {
+      "type": "stat",
+      "title": "Cost",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
+          "queryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 27
     },
     {
       "type": "stat",
@@ -149,7 +206,9 @@
             "uid": "prometheus"
           },
           "expr": "sum(increase(gateway_requests_total{upstream=~\"$upstream\", model=~\"$model\", outcome!=\"ok\"}[$__range])) / sum(increase(gateway_requests_total{upstream=~\"$upstream\", model=~\"$model\"}[$__range]))",
-          "legendFormat": ""
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "options": {
@@ -162,23 +221,23 @@
         "graphMode": "none"
       },
       "gridPos": {
-        "x": 6,
+        "x": 8,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
-      "id": 3
+      "id": 28
     },
     {
       "type": "stat",
-      "title": "Tokens",
+      "title": "Cache hit ratio",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -189,8 +248,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\"}[$__range]))",
-          "legendFormat": ""
+          "expr": "sum(increase(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_read\"}[$__range])) / sum(increase(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"input\"}[$__range]))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "options": {
@@ -202,24 +263,25 @@
         "colorMode": "none",
         "graphMode": "none"
       },
+      "description": "Share of input tokens read from the prompt cache.",
       "gridPos": {
         "x": 12,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
-      "id": 4
+      "id": 29
     },
     {
       "type": "stat",
-      "title": "Cost",
+      "title": "TTFT p95",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "currencyUSD"
+          "unit": "s"
         },
         "overrides": []
       },
@@ -230,8 +292,10 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(gateway_cost_usd_total{upstream=~\"$upstream\", model=~\"$model\"}[$__range]))",
-          "legendFormat": ""
+          "expr": "histogram_quantile(0.95, sum by (le) (increase(gateway_ttft_seconds_bucket{upstream=~\"$upstream\", model=~\"$model\"}[$__range])))",
+          "legendFormat": "",
+          "instant": true,
+          "range": false
         }
       ],
       "options": {
@@ -244,12 +308,461 @@
         "graphMode": "none"
       },
       "gridPos": {
-        "x": 18,
+        "x": 16,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
-      "id": 5
+      "id": 30
+    },
+    {
+      "type": "stat",
+      "title": "Sessions",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT count(DISTINCT t.session_id) AS sessions\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')",
+          "queryText": "SELECT count(DISTINCT t.session_id) AS sessions\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 31
+    },
+    {
+      "type": "row",
+      "title": "Summary",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "id": 32
+    },
+    {
+      "type": "table",
+      "title": "By model",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            },
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "error_ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean_ttft_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "max_ttft_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mean_output_tps"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_hit_ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT coalesce(t.response_model, t.requested_model, '(none)') AS model,\n       count(*) AS requests,\n       avg(t.outcome != 'ok') AS error_ratio,\n       avg(t.ttft_ms) AS mean_ttft_ms,\n       max(t.ttft_ms) AS max_ttft_ms,\n       avg(t.output_tps) AS mean_output_tps,\n       sum(t.output_tokens) AS output_tokens,\n       1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY cost_usd DESC",
+          "queryText": "SELECT coalesce(t.response_model, t.requested_model, '(none)') AS model,\n       count(*) AS requests,\n       avg(t.outcome != 'ok') AS error_ratio,\n       avg(t.ttft_ms) AS mean_ttft_ms,\n       max(t.ttft_ms) AS max_ttft_ms,\n       avg(t.output_tps) AS mean_output_tps,\n       sum(t.output_tokens) AS output_tokens,\n       1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY cost_usd DESC",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 16,
+        "h": 8
+      },
+      "id": 33
+    },
+    {
+      "type": "timeseries",
+      "title": "Cost per day",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          },
+          "displayName": "${__field.labels.series}"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT max((t.started_at / 86400000) * 86400, $__from / 1000) AS time,\n       coalesce(t.response_model, t.requested_model) AS series,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.cost_usd IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT max((t.started_at / 86400000) * 86400, $__from / 1000) AS time,\n       coalesce(t.response_model, t.requested_model) AS series,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.cost_usd IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "UTC days; the first bar starts at the range start. Widen the time range to compare days.",
+      "gridPos": {
+        "x": 16,
+        "y": 6,
+        "w": 8,
+        "h": 8
+      },
+      "id": 34
+    },
+    {
+      "type": "table",
+      "title": "Top sessions",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            },
+            "minWidth": 60
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "span_ms"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache_hit_ratio"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cost_usd"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT substr(t.session_id, 1, 8) AS session,\n       count(*) AS requests,\n       min(t.started_at) / 1000.0 AS first,\n       max(t.started_at + t.duration_ms) - min(t.started_at) AS span_ms,\n       group_concat(DISTINCT coalesce(t.response_model, t.requested_model)) AS models,\n       sum(t.output_tokens) AS output_tokens,\n       1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.session_id IS NOT NULL\nGROUP BY t.session_id\nORDER BY cost_usd DESC\nLIMIT 20",
+          "queryText": "SELECT substr(t.session_id, 1, 8) AS session,\n       count(*) AS requests,\n       min(t.started_at) / 1000.0 AS first,\n       max(t.started_at + t.duration_ms) - min(t.started_at) AS span_ms,\n       group_concat(DISTINCT coalesce(t.response_model, t.requested_model)) AS models,\n       sum(t.output_tokens) AS output_tokens,\n       1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.session_id IS NOT NULL\nGROUP BY t.session_id\nORDER BY cost_usd DESC\nLIMIT 20",
+          "timeColumns": [
+            "first"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 10,
+        "h": 8
+      },
+      "id": 35
+    },
+    {
+      "type": "bargauge",
+      "title": "Stop reasons",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "min": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT coalesce(t.stop_reason, '(none)') AS stop_reason, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 2 DESC",
+          "queryText": "SELECT coalesce(t.stop_reason, '(none)') AS stop_reason, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 2 DESC",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": true,
+          "calcs": [],
+          "fields": "/^requests$/"
+        },
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true
+      },
+      "description": "max_tokens = output cut at the limit; (none) = failed or cancelled.",
+      "gridPos": {
+        "x": 10,
+        "y": 14,
+        "w": 6,
+        "h": 8
+      },
+      "id": 36
+    },
+    {
+      "type": "table",
+      "title": "Errors",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            },
+            "minWidth": 60
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT t.outcome, t.error_type, t.http_status, count(*) AS requests, max(t.started_at) / 1000.0 AS last\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.outcome != 'ok'\nGROUP BY 1, 2, 3\nORDER BY requests DESC",
+          "queryText": "SELECT t.outcome, t.error_type, t.http_status, count(*) AS requests, max(t.started_at) / 1000.0 AS last\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.outcome != 'ok'\nGROUP BY 1, 2, 3\nORDER BY requests DESC",
+          "timeColumns": [
+            "last"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 14,
+        "w": 8,
+        "h": 8
+      },
+      "id": 37
     },
     {
       "type": "row",
@@ -257,7 +770,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 5,
+        "y": 22,
         "w": 24,
         "h": 1
       },
@@ -301,98 +814,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 6,
-        "w": 12,
+        "y": 23,
+        "w": 8,
         "h": 8
       },
       "id": 7
-    },
-    {
-      "type": "timeseries",
-      "title": "Tokens / min by model",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {}
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (model) (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\"}[$__rate_interval])) * 60",
-          "legendFormat": "{{model}}"
-        }
-      ],
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "gridPos": {
-        "x": 12,
-        "y": 6,
-        "w": 12,
-        "h": 8
-      },
-      "id": 8
-    },
-    {
-      "type": "timeseries",
-      "title": "Tokens / min by kind",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "custom": {}
-        },
-        "overrides": []
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (kind) (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\"}[$__rate_interval])) * 60",
-          "legendFormat": "{{kind}}"
-        }
-      ],
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "description": "input includes cache reads and writes",
-      "gridPos": {
-        "x": 0,
-        "y": 14,
-        "w": 12,
-        "h": 8
-      },
-      "id": 9
     },
     {
       "type": "timeseries",
@@ -434,12 +860,237 @@
         }
       },
       "gridPos": {
-        "x": 12,
-        "y": 14,
-        "w": 12,
+        "x": 8,
+        "y": 23,
+        "w": 8,
         "h": 8
       },
       "id": 10
+    },
+    {
+      "type": "timeseries",
+      "title": "Output tokens / min by model",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"output\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 23,
+        "w": 8,
+        "h": 8
+      },
+      "id": 38
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens / min by kind",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 30
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fresh input"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache write"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "cache read"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "output"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "(sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"input\"}[$__rate_interval])) - (sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_read\"}[$__rate_interval])) or vector(0)) - (sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_write\"}[$__rate_interval])) or vector(0))) * 60",
+          "legendFormat": "fresh input"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_write\"}[$__rate_interval])) * 60",
+          "legendFormat": "cache write"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_read\"}[$__rate_interval])) * 60",
+          "legendFormat": "cache read"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"output\"}[$__rate_interval])) * 60",
+          "legendFormat": "output"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Kinds do not overlap; the stack is all input plus output. Reasoning is part of output.",
+      "gridPos": {
+        "x": 0,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "id": 39
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit ratio by model",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {},
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (model) (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"cache_read\"}[$__rate_interval])) / sum by (model) (rate(gateway_tokens_total{upstream=~\"$upstream\", model=~\"$model\", kind=\"input\"}[$__rate_interval]))",
+          "legendFormat": "{{model}}"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 31,
+        "w": 12,
+        "h": 8
+      },
+      "id": 40
     },
     {
       "type": "row",
@@ -447,7 +1098,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 39,
         "w": 24,
         "h": 1
       },
@@ -491,7 +1142,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 23,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -553,7 +1204,7 @@
       "description": "From the SQLite store. caller = HMAC of the API key; set IG_IDENTITY_SECRET to fill it.",
       "gridPos": {
         "x": 12,
-        "y": 23,
+        "y": 40,
         "w": 12,
         "h": 8
       },
@@ -565,7 +1216,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 48,
         "w": 24,
         "h": 1
       },
@@ -627,7 +1278,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 32,
+        "y": 49,
         "w": 12,
         "h": 8
       },
@@ -689,7 +1340,7 @@
       "description": "first content delta of any kind, thinking included",
       "gridPos": {
         "x": 12,
-        "y": 32,
+        "y": 49,
         "w": 12,
         "h": 8
       },
@@ -732,7 +1383,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -785,7 +1436,7 @@
       "description": "decode throughput: output tokens / (end - first token)",
       "gridPos": {
         "x": 8,
-        "y": 40,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -828,7 +1479,7 @@
       },
       "gridPos": {
         "x": 16,
-        "y": 40,
+        "y": 57,
         "w": 8,
         "h": 8
       },
@@ -840,7 +1491,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 65,
         "w": 24,
         "h": 1
       },
@@ -848,7 +1499,7 @@
       "id": 20
     },
     {
-      "type": "timeseries",
+      "type": "stat",
       "title": "Rate-limit remaining",
       "datasource": {
         "type": "prometheus",
@@ -857,7 +1508,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {}
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "noValue": "not reported"
         },
         "overrides": []
       },
@@ -873,26 +1529,24 @@
         }
       ],
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "colorMode": "none",
+        "graphMode": "area"
       },
-      "description": "API-key traffic; subscription traffic has window utilization instead",
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 66,
         "w": 8,
-        "h": 8
+        "h": 6
       },
-      "id": 21
+      "id": 41
     },
     {
-      "type": "timeseries",
+      "type": "gauge",
       "title": "Subscription window utilization",
       "datasource": {
         "type": "prometheus",
@@ -901,7 +1555,25 @@
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
-          "custom": {}
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.7
+              },
+              {
+                "color": "red",
+                "value": 0.9
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -917,26 +1589,24 @@
         }
       ],
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showThresholdMarkers": true
       },
       "gridPos": {
         "x": 8,
-        "y": 49,
+        "y": 66,
         "w": 8,
-        "h": 8
+        "h": 6
       },
-      "id": 22
+      "id": 42
     },
     {
-      "type": "timeseries",
-      "title": "Module drops / min",
+      "type": "stat",
+      "title": "Module drops",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -944,7 +1614,20 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": {}
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
         },
         "overrides": []
       },
@@ -955,27 +1638,172 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (module) (rate(gateway_module_dropped_total[$__rate_interval])) * 60",
-          "legendFormat": "{{module}}"
+          "expr": "sum by (module) (increase(gateway_module_dropped_total[$__range]))",
+          "legendFormat": "{{module}}",
+          "instant": true,
+          "range": false
         }
       ],
       "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom"
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "colorMode": "value",
+        "graphMode": "none"
       },
       "gridPos": {
         "x": 16,
-        "y": 49,
+        "y": 66,
         "w": 8,
-        "h": 8
+        "h": 6
       },
-      "id": 23
+      "id": 43
+    },
+    {
+      "type": "row",
+      "title": "Limits & health history",
+      "collapsed": true,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Rate-limit remaining",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "gateway_upstream_ratelimit_remaining{upstream=~\"$upstream\", model=~\"$model\"}",
+              "legendFormat": "{{model}} {{kind}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "description": "API-key traffic; subscription traffic has window utilization instead",
+          "gridPos": {
+            "x": 0,
+            "y": 73,
+            "w": 8,
+            "h": 8
+          },
+          "id": 21
+        },
+        {
+          "type": "timeseries",
+          "title": "Subscription window utilization",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "gateway_subscription_window_utilization{upstream=~\"$upstream\"}",
+              "legendFormat": "{{upstream}} {{window}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 73,
+            "w": 8,
+            "h": 8
+          },
+          "id": 22
+        },
+        {
+          "type": "timeseries",
+          "title": "Module drops / min",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {}
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "expr": "sum by (module) (rate(gateway_module_dropped_total[$__rate_interval])) * 60",
+              "legendFormat": "{{module}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 73,
+            "w": 8,
+            "h": 8
+          },
+          "id": 23
+        }
+      ],
+      "gridPos": {
+        "x": 0,
+        "y": 72,
+        "w": 24,
+        "h": 1
+      },
+      "id": 44
     },
     {
       "type": "row",
@@ -983,7 +1811,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 73,
         "w": 24,
         "h": 1
       },
@@ -1081,8 +1909,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT t.started_at / 1000.0 AS time,\n       t.upstream,\n       coalesce(t.response_model, t.requested_model) AS model,\n       t.outcome,\n       t.stop_reason,\n       t.ttft_ms,\n       t.duration_ms,\n       t.input_tokens_total AS input,\n       t.output_tokens AS output,\n       t.cost_usd,\n       t.session_id AS session,\n       t.captured,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nORDER BY t.started_at DESC\nLIMIT 100",
-          "queryText": "SELECT t.started_at / 1000.0 AS time,\n       t.upstream,\n       coalesce(t.response_model, t.requested_model) AS model,\n       t.outcome,\n       t.stop_reason,\n       t.ttft_ms,\n       t.duration_ms,\n       t.input_tokens_total AS input,\n       t.output_tokens AS output,\n       t.cost_usd,\n       t.session_id AS session,\n       t.captured,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nORDER BY t.started_at DESC\nLIMIT 100",
+          "rawQueryText": "SELECT t.started_at / 1000.0 AS time,\n       t.upstream,\n       coalesce(t.response_model, t.requested_model) AS model,\n       t.outcome,\n       t.stop_reason,\n       t.ttft_ms,\n       t.duration_ms,\n       t.input_tokens_total AS input,\n       t.cache_read_tokens AS cache_read,\n       t.output_tokens AS output,\n       t.cost_usd,\n       t.session_id AS session,\n       t.captured,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nORDER BY t.started_at DESC\nLIMIT 100",
+          "queryText": "SELECT t.started_at / 1000.0 AS time,\n       t.upstream,\n       coalesce(t.response_model, t.requested_model) AS model,\n       t.outcome,\n       t.stop_reason,\n       t.ttft_ms,\n       t.duration_ms,\n       t.input_tokens_total AS input,\n       t.cache_read_tokens AS cache_read,\n       t.output_tokens AS output,\n       t.cost_usd,\n       t.session_id AS session,\n       t.captured,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nORDER BY t.started_at DESC\nLIMIT 100",
           "timeColumns": [
             "time"
           ]
@@ -1095,7 +1923,7 @@
       "description": "From the SQLite store; trace opens the span in Tempo.",
       "gridPos": {
         "x": 0,
-        "y": 58,
+        "y": 74,
         "w": 24,
         "h": 10
       },

@@ -149,10 +149,56 @@
       "gridPos": {
         "x": 0,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
       "id": 2
+    },
+    {
+      "type": "stat",
+      "title": "Pass rate",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "description": "Scores that are not false, not a bad label and not under low_score. Confidence is ignored.",
+      "gridPos": {
+        "x": 4,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 19
     },
     {
       "type": "stat",
@@ -192,9 +238,9 @@
         "graphMode": "none"
       },
       "gridPos": {
-        "x": 6,
+        "x": 8,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
       "id": 3
@@ -239,7 +285,7 @@
       "gridPos": {
         "x": 12,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
       "id": 4
@@ -282,12 +328,59 @@
         "graphMode": "none"
       },
       "gridPos": {
-        "x": 18,
+        "x": 16,
         "y": 1,
-        "w": 6,
+        "w": 4,
         "h": 4
       },
       "id": 5
+    },
+    {
+      "type": "stat",
+      "title": "Pending jobs",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT count(*) AS jobs FROM eval_jobs WHERE status IN ('pending', 'running') AND evaluator IN (${evaluator:singlequote})",
+          "queryText": "SELECT count(*) AS jobs FROM eval_jobs WHERE status IN ('pending', 'running') AND evaluator IN (${evaluator:singlequote})",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none",
+        "graphMode": "none"
+      },
+      "description": "Current backlog; ignores the time range.",
+      "gridPos": {
+        "x": 20,
+        "y": 1,
+        "w": 4,
+        "h": 4
+      },
+      "id": 20
     },
     {
       "type": "row",
@@ -304,23 +397,21 @@
     },
     {
       "type": "timeseries",
-      "title": "Labels over time by model and evaluator version",
+      "title": "Pass rate over time by evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
           "custom": {
             "showPoints": "always",
-            "stacking": {
-              "mode": "normal"
-            },
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "barAlignment": 0
-          }
+            "spanNulls": true
+          },
+          "displayName": "${__field.labels.series}"
         },
         "overrides": []
       },
@@ -332,8 +423,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) || ' \u00b7 ' || coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS series,\n       count(*) AS scores\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
-          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) || ' \u00b7 ' || coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS series,\n       count(*) AS scores\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS pass_rate\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS pass_rate\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": [
             "time"
           ]
@@ -349,7 +440,7 @@
           "sort": "desc"
         }
       },
-      "description": "choice and noul answers: count per label",
+      "description": "Same verdict as the Pass rate stat.",
       "gridPos": {
         "x": 0,
         "y": 6,
@@ -370,7 +461,8 @@
           "unit": "short",
           "custom": {
             "showPoints": "always"
-          }
+          },
+          "displayName": "${__field.labels.series}"
         },
         "overrides": []
       },
