@@ -56,7 +56,11 @@ impl Prometheus {
             let opts = HistogramOpts::new(name, help).buckets(buckets.to_vec());
             register(&registry, HistogramVec::new(opts, labels)?)
         };
-        let latency = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0];
+        // About x1.5 per step, so a quantile's error is at most one step.
+        let latency = [
+            0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0,
+            20.0, 30.0, 45.0, 60.0, 90.0, 120.0,
+        ];
 
         Ok(Self {
             drops: ctx.drops.clone(),
@@ -99,7 +103,8 @@ impl Prometheus {
                 "Time to last byte, failure or cancellation.",
                 REQUEST_LABELS,
                 &[
-                    0.5, 1.0, 2.5, 5.0, 10.0, 20.0, 40.0, 80.0, 160.0, 320.0, 640.0,
+                    0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0,
+                    90.0, 120.0, 180.0, 240.0, 360.0, 480.0, 640.0,
                 ],
             )?,
             output_tps: histogram(
