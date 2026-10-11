@@ -33,6 +33,9 @@ services:
       - ./grafana/dashboards:/otel-lgtm/grafana/conf/provisioning/dashboards/gateway:ro
       # Read by the SQLite datasource. Not :ro: a WAL reader writes the -shm file.
       - gateway-data:/gateway-data
+      # Store of a gateway on the host. :ro, so Grafana (root) creates no
+      # files there that the host gateway cannot write.
+      - ../config:/gateway-host:ro
       - lgtm-data:/data
     ports:
       - 127.0.0.1:3000:3000   # Grafana

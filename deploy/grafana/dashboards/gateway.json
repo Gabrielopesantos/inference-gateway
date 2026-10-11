@@ -16,7 +16,7 @@
     {
       "title": "Quality",
       "type": "link",
-      "url": "/d/quality",
+      "url": "/d/quality?${store:queryparam}",
       "keepTime": true,
       "includeVars": false,
       "icon": "dashboard"
@@ -25,12 +25,22 @@
   "templating": {
     "list": [
       {
+        "name": "store",
+        "label": "store",
+        "type": "datasource",
+        "query": "frser-sqlite-datasource",
+        "current": {
+          "text": "Gateway SQLite",
+          "value": "gateway-sqlite"
+        }
+      },
+      {
         "name": "upstream",
         "label": "upstream",
         "type": "query",
         "datasource": {
           "type": "frser-sqlite-datasource",
-          "uid": "gateway-sqlite"
+          "uid": "${store}"
         },
         "query": "SELECT DISTINCT upstream FROM traces WHERE started_at >= $__from AND started_at < $__to ORDER BY 1",
         "definition": "SELECT DISTINCT upstream FROM traces WHERE started_at >= $__from AND started_at < $__to ORDER BY 1",
@@ -50,7 +60,7 @@
         "type": "query",
         "datasource": {
           "type": "frser-sqlite-datasource",
-          "uid": "gateway-sqlite"
+          "uid": "${store}"
         },
         "query": "SELECT DISTINCT coalesce(t.response_model, t.requested_model) AS model FROM traces t WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND coalesce(t.response_model, t.requested_model) IS NOT NULL ORDER BY 1",
         "definition": "SELECT DISTINCT coalesce(t.response_model, t.requested_model) AS model FROM traces t WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND coalesce(t.response_model, t.requested_model) IS NOT NULL ORDER BY 1",
@@ -85,7 +95,7 @@
       "title": "Requests",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -103,7 +113,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
@@ -135,7 +145,7 @@
       "title": "Cost",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -152,7 +162,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (t.started_at / $__interval_ms) * $__interval_ms / 1000 AS time, sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 1",
@@ -184,7 +194,7 @@
       "title": "Error ratio",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -197,7 +207,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT avg(t.outcome != 'ok') AS error_ratio FROM traces t WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')",
@@ -227,7 +237,7 @@
       "title": "Cache hit ratio",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -240,7 +250,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT 1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio FROM traces t WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')",
@@ -270,7 +280,7 @@
       "title": "TTFT p95",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -284,7 +294,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT ttft_ms AS ttft_p95 FROM (\n  SELECT t.ttft_ms, row_number() OVER (ORDER BY t.ttft_ms) AS n, count(*) OVER () AS timed\n  FROM traces t WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.ttft_ms IS NOT NULL)\nWHERE n = (95 * timed + 99) / 100",
@@ -313,7 +323,7 @@
       "title": "Sessions",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -327,7 +337,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT count(DISTINCT t.session_id) AS sessions\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')",
@@ -372,7 +382,7 @@
       "title": "By model",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -487,7 +497,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "WITH r AS (\n  SELECT coalesce(coalesce(t.response_model, t.requested_model), '(none)') AS model, t.outcome, t.ttft_ms, t.output_tps,\n         t.output_tokens, t.cache_read_tokens, t.input_tokens_total, t.cost_usd,\n         row_number() OVER (PARTITION BY coalesce(t.response_model, t.requested_model) ORDER BY t.ttft_ms IS NULL, t.ttft_ms) AS n,\n         count(t.ttft_ms) OVER (PARTITION BY coalesce(t.response_model, t.requested_model)) AS timed\n  FROM traces t\n  WHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%'))\nSELECT model,\n       count(*) AS requests,\n       avg(outcome != 'ok') AS error_ratio,\n       max(CASE WHEN n = (50 * timed + 99) / 100 THEN ttft_ms END) AS ttft_p50_ms,\n       max(CASE WHEN n = (95 * timed + 99) / 100 THEN ttft_ms END) AS ttft_p95_ms,\n       avg(output_tps) AS mean_output_tps,\n       sum(output_tokens) AS output_tokens,\n       1.0 * sum(cache_read_tokens) / sum(input_tokens_total) AS cache_hit_ratio,\n       sum(cost_usd) AS cost_usd\nFROM r\nGROUP BY model\nORDER BY cost_usd DESC",
@@ -514,7 +524,7 @@
       "title": "Cost per day",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -536,7 +546,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT max((t.started_at / 86400000) * 86400, $__from / 1000) AS time,\n       coalesce(t.response_model, t.requested_model) AS series,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.cost_usd IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
@@ -570,7 +580,7 @@
       "title": "Top sessions",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -637,7 +647,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT substr(t.session_id, 1, 8) AS session,\n       count(*) AS requests,\n       min(t.started_at) / 1000.0 AS first,\n       max(t.started_at + t.duration_ms) - min(t.started_at) AS span_ms,\n       group_concat(DISTINCT coalesce(t.response_model, t.requested_model)) AS models,\n       sum(t.output_tokens) AS output_tokens,\n       1.0 * sum(t.cache_read_tokens) / sum(t.input_tokens_total) AS cache_hit_ratio,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.session_id IS NOT NULL\nGROUP BY t.session_id\nORDER BY cost_usd DESC\nLIMIT 20",
@@ -664,7 +674,7 @@
       "title": "Cost by caller",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -698,7 +708,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT coalesce(t.caller_id, '(no caller id)') AS caller,\n       count(*) AS requests,\n       sum(t.input_tokens_total) AS input_tokens,\n       sum(t.output_tokens) AS output_tokens,\n       sum(t.cost_usd) AS cost_usd\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY cost_usd DESC",
@@ -1382,7 +1392,7 @@
       "title": "Stop reasons",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1401,7 +1411,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT coalesce(t.stop_reason, '(none)') AS stop_reason, count(*) AS requests\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nGROUP BY 1\nORDER BY 2 DESC",
@@ -1435,7 +1445,7 @@
       "title": "Errors",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1453,7 +1463,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT t.outcome, t.error_type, t.http_status, count(*) AS requests, max(t.started_at) / 1000.0 AS last\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%') AND t.outcome != 'ok'\nGROUP BY 1, 2, 3\nORDER BY requests DESC",
@@ -1480,7 +1490,7 @@
       "title": "Recent requests",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1563,7 +1573,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT t.started_at / 1000.0 AS time,\n       t.upstream,\n       coalesce(t.response_model, t.requested_model) AS model,\n       t.outcome,\n       t.stop_reason,\n       t.ttft_ms,\n       t.duration_ms,\n       t.input_tokens_total AS input,\n       t.cache_read_tokens AS cache_read,\n       t.output_tokens AS output,\n       t.cost_usd,\n       t.session_id AS session,\n       t.captured,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM traces t\nWHERE t.started_at >= $__from AND t.started_at < $__to AND ('${upstream:csv}' = '.*' OR ',${upstream:csv},' LIKE '%,' || t.upstream || ',%') AND ('${model:csv}' = '.*' OR ',${model:csv},' LIKE '%,' || coalesce(t.response_model, t.requested_model) || ',%')\nORDER BY t.started_at DESC\nLIMIT 100",

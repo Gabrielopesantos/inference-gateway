@@ -10,7 +10,9 @@ use rusqlite::types::Value;
 use rusqlite::{Connection, params};
 use serde_json::Value as Json;
 
-const SQLITE_UID: &str = "gateway-sqlite";
+/// The `store` dashboard variable: picks the compose or the host store.
+const SQLITE_UID: &str = "${store}";
+const SQLITE_TYPE: &str = "frser-sqlite-datasource";
 
 fn seed(conn: &Connection) {
     let trace = |id: u8, model: &str, ttft_ms: Option<f64>, outcome: &str| {
@@ -105,7 +107,15 @@ fn rows(conn: &Connection, sql: &str) -> Vec<Vec<Value>> {
 }
 
 fn is_sqlite(v: &Json) -> bool {
-    v["datasource"]["uid"] == SQLITE_UID
+    let ds = &v["datasource"];
+    if ds["type"] != SQLITE_TYPE {
+        return false;
+    }
+    assert_eq!(
+        ds["uid"], SQLITE_UID,
+        "SQLite query must use the store variable"
+    );
+    true
 }
 
 /// Fills the time range and variables the way Grafana does with "All".
@@ -115,6 +125,10 @@ impl Vars {
     fn new(conn: &Connection, dashboard: &Json) -> Self {
         let mut vars = Self(BTreeMap::new());
         for v in dashboard["templating"]["list"].as_array().unwrap() {
+            if v["type"] == "datasource" {
+                assert_eq!(v["query"], SQLITE_TYPE, "variable {}", v["name"]);
+                continue;
+            }
             assert!(is_sqlite(v), "variable {} must query the store", v["name"]);
             let name = v["name"].as_str().unwrap();
             let sql = vars.fill(v["query"].as_str().unwrap());

@@ -16,7 +16,7 @@
     {
       "title": "Gateway",
       "type": "link",
-      "url": "/d/gateway",
+      "url": "/d/gateway?${store:queryparam}",
       "keepTime": true,
       "includeVars": false,
       "icon": "dashboard"
@@ -25,12 +25,22 @@
   "templating": {
     "list": [
       {
+        "name": "store",
+        "label": "store",
+        "type": "datasource",
+        "query": "frser-sqlite-datasource",
+        "current": {
+          "text": "Gateway SQLite",
+          "value": "gateway-sqlite"
+        }
+      },
+      {
         "name": "evaluator",
         "label": "evaluator",
         "type": "query",
         "datasource": {
           "type": "frser-sqlite-datasource",
-          "uid": "gateway-sqlite"
+          "uid": "${store}"
         },
         "query": "SELECT DISTINCT name FROM scores ORDER BY 1",
         "definition": "SELECT DISTINCT name FROM scores ORDER BY 1",
@@ -49,7 +59,7 @@
         "type": "query",
         "datasource": {
           "type": "frser-sqlite-datasource",
-          "uid": "gateway-sqlite"
+          "uid": "${store}"
         },
         "query": "SELECT DISTINCT evaluator_version FROM scores WHERE name IN (${evaluator:singlequote}) ORDER BY 1",
         "definition": "SELECT DISTINCT evaluator_version FROM scores WHERE name IN (${evaluator:singlequote}) ORDER BY 1",
@@ -83,7 +93,7 @@
       "title": "Scores",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -97,7 +107,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT count(*) AS scores FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
@@ -129,7 +139,7 @@
       "title": "Pass rate",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -142,7 +152,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT 1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
@@ -175,7 +185,7 @@
       "title": "Uncertain",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -188,7 +198,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT avg(s.verdict = 'uncertain') AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL",
@@ -221,7 +231,7 @@
       "title": "Truncated judge inputs",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -234,7 +244,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
@@ -266,7 +276,7 @@
       "title": "Judge cost",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -279,7 +289,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT sum(s.judge_cost_usd) AS cost FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
@@ -311,7 +321,7 @@
       "title": "Pending jobs",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -325,7 +335,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT count(*) AS jobs FROM eval_jobs WHERE status IN ('pending', 'running') AND evaluator IN (${evaluator:singlequote})",
@@ -371,7 +381,7 @@
       "title": "Pass rate by evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -391,7 +401,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('pass', 'fail')\nGROUP BY 1, 2\nORDER BY 1",
@@ -426,7 +436,7 @@
       "description": "Scores with a verdict, per model and evaluator.",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -460,7 +470,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT coalesce(coalesce(t.response_model, t.requested_model), '(none)') AS model,\n       s.name AS evaluator,\n       sum(s.verdict = 'pass') AS pass,\n       sum(s.verdict = 'fail') AS fail,\n       sum(s.verdict = 'uncertain') AS uncertain,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL\nGROUP BY 1, 2\nORDER BY 2, pass_rate",
@@ -500,7 +510,7 @@
       "title": "Score mean by model and evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -517,7 +527,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'numeric'\nGROUP BY 1, 2\nORDER BY 1",
@@ -551,7 +561,7 @@
       "title": "yes_no P(yes) by model and evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -570,7 +580,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'bool'\nGROUP BY 1, 2\nORDER BY 1",
@@ -604,7 +614,7 @@
       "title": "Distribution by model and evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -634,7 +644,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       s.label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
@@ -662,7 +672,7 @@
       "description": "choice and score answers; yes_no has none",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -676,7 +686,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT s.confidence FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
@@ -719,7 +729,7 @@
       "description": "jobs created in the time range",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -733,7 +743,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT sum(status = 'pending') AS pending, sum(status = 'running') AS running, sum(status = 'done') AS done, sum(status = 'failed') AS failed FROM eval_jobs WHERE created_at >= $__from AND created_at < $__to AND evaluator IN (${evaluator:singlequote})",
@@ -765,7 +775,7 @@
       "title": "Judge by model",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -823,7 +833,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
@@ -850,7 +860,7 @@
       "title": "Judge cost / hour",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -869,7 +879,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "time series",
           "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
@@ -955,7 +965,7 @@
       "title": "Failed jobs",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1005,7 +1015,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT j.created_at / 1000.0 AS time,\n       j.evaluator,\n       substr(j.evaluator_version, 1, 8) AS version,\n       j.attempts,\n       j.last_error,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM eval_jobs j JOIN traces t ON t.id = j.trace_id\nWHERE j.status = 'failed' AND j.created_at >= $__from AND j.created_at < $__to AND j.evaluator IN (${evaluator:singlequote})\nORDER BY j.created_at DESC\nLIMIT 50",
@@ -1045,7 +1055,7 @@
       "title": "Fail or uncertain",
       "datasource": {
         "type": "frser-sqlite-datasource",
-        "uid": "gateway-sqlite"
+        "uid": "${store}"
       },
       "fieldConfig": {
         "defaults": {
@@ -1118,7 +1128,7 @@
           "refId": "A",
           "datasource": {
             "type": "frser-sqlite-datasource",
-            "uid": "gateway-sqlite"
+            "uid": "${store}"
           },
           "queryType": "table",
           "rawQueryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       s.verdict,\n       s.label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('fail', 'uncertain')\nORDER BY s.created_at DESC\nLIMIT 50",

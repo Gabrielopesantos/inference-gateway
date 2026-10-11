@@ -31,7 +31,7 @@ requests are stored with content and can be scored.
 | `gateway.toml` | gateway config inside the container: store on the `gateway-data` volume, spans to `lgtm:4318` |
 | `.env` (optional, gitignored) | `IG_IDENTITY_SECRET` (caller ids), `IG_JUDGE_API_KEY` (evaluation), `IG_GATEWAY_TOKEN` |
 | `prometheus.yaml` | otel-lgtm's default plus scrape jobs for the gateway |
-| `grafana/provisioning/datasources/datasources.yaml` | Prometheus, Tempo, Loki, Pyroscope (otel-lgtm's uids) and the gateway SQLite store |
+| `grafana/provisioning/datasources/datasources.yaml` | Prometheus, Tempo, Loki, Pyroscope (otel-lgtm's uids) and the two gateway SQLite stores |
 | `grafana/dashboards/*.json` | provisioned dashboards |
 
 Evaluation is off until the `[eval.*]` sections in `gateway.toml` are uncommented
@@ -42,9 +42,11 @@ and `IG_JUDGE_API_KEY` is set in `deploy/.env`.
 `docker compose -f deploy/compose.yaml up -d lgtm` starts only the backend. Run
 the gateway with `[otel] endpoint = "http://localhost:4318"` and
 `--admin-listen 0.0.0.0:9090`: the `gateway-host` scrape job reaches it through
-`host.docker.internal`, which a loopback-only listener does not accept. Panels
-backed by SQLite read the `gateway-data` volume only, so they stay empty for a
-gateway on the host.
+`host.docker.internal`, which a loopback-only listener does not accept. The
+`store` dropdown on the dashboards picks the SQLite store: `Gateway SQLite`
+(the `gateway-data` volume) or `Gateway SQLite (host)` (`config/gateway.db`,
+mounted read-only). The host store can be read only while its `-wal` and `-shm`
+files exist, that is while the host gateway runs.
 
 ## SQLite from Grafana
 
