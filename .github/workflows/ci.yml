@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: nix develop -c cargo fmt --check
+      - name: clippy
+        run: nix develop -c cargo clippy --all-targets --all-features -- -D warnings
+      - name: test
+        run: nix develop -c cargo test
+      - name: build without default features
+        run: nix develop -c cargo build --no-default-features
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t inference-gateway:ci .
