@@ -100,9 +100,9 @@ sample = 0.25         # deterministic per trace id
 # api_key_env = "IG_JUDGE_API_KEY"
 # max_input_tokens = 32000        # judge limit for input plus question
 #
-# # One question per evaluator. Editing the judge model, input, question or
-# # criteria makes a new evaluator version; `inference-gateway eval backfill
-# # --evaluator NAME` scores old traces again under it.
+# # One question per evaluator. Renaming it or editing the judge model, input,
+# # question or criteria makes a new evaluator version; `inference-gateway eval
+# # backfill --config FILE --evaluator NAME` scores old traces again under it.
 # [[eval.evaluators]]
 # name = "answered"
 # # stop_reason (evaluators only): raw provider values. Agent turns that call a

@@ -299,7 +299,7 @@ fn evaluator(e: EvaluatorFile, model: &str, upstreams: &[Upstream]) -> Result<Ev
         .map(|p| pass_labels(p, &question))
         .transpose()
         .context("pass")?;
-    let version = version(model, &e.input, &question)?;
+    let version = version(&e.name, model, &e.input, &question)?;
     Ok(Evaluator {
         name: e.name,
         matcher,
@@ -369,9 +369,9 @@ fn pass_labels(labels: Vec<String>, question: &Question) -> Result<Vec<String>> 
     Ok(labels)
 }
 
-fn version(model: &str, input: &str, question: &Question) -> Result<String> {
+fn version(name: &str, model: &str, input: &str, question: &Question) -> Result<String> {
     let mut h = Sha256::new();
-    for part in [model, input, &serde_json::to_string(question)?] {
+    for part in [name, model, input, &serde_json::to_string(question)?] {
         // Length-prefixed, so moving text between parts changes the hash.
         h.update((part.len() as u64).to_be_bytes());
         h.update(part);
@@ -581,10 +581,11 @@ criteria = { yes = "Fully", no = "" }
     }
 
     #[test]
-    fn version_tracks_model_template_and_question() {
+    fn version_tracks_name_model_template_and_question() {
         let base = parse(CHOICE).unwrap().evaluators[0].version.clone();
         assert_eq!(parse(CHOICE).unwrap().evaluators[0].version, base);
         let changed = [
+            parse(&CHOICE.replace("name = \"answered\"", "name = \"replied\"")).unwrap(),
             parse(&CHOICE.replace("<user>", "<u>")).unwrap(),
             parse(&CHOICE.replace("Did it answer?", "Answered?")).unwrap(),
             parse(&CHOICE.replace("no = \"\"", "no = \"Not at all\"")).unwrap(),
