@@ -190,9 +190,9 @@ async fn rate_limit_headers_become_gauges() {
 
     let text = metrics_containing(&gw, "gateway_upstream_ratelimit_remaining").await;
     for line in [
-        r#"gateway_upstream_ratelimit_remaining{kind="requests",model="claude-sonnet-5",upstream="anthropic"} 0"#,
-        r#"gateway_upstream_ratelimit_remaining{kind="tokens",model="claude-sonnet-5",upstream="anthropic"} 81000"#,
-        r#"gateway_requests_total{model="claude-sonnet-5",outcome="upstream_error",provider="anthropic",streaming="false",upstream="anthropic"} 1"#,
+        r#"gateway_upstream_ratelimit_remaining{kind="requests",model="unknown",upstream="anthropic"} 0"#,
+        r#"gateway_upstream_ratelimit_remaining{kind="tokens",model="unknown",upstream="anthropic"} 81000"#,
+        r#"gateway_requests_total{model="unknown",outcome="upstream_error",provider="anthropic",streaming="false",upstream="anthropic"} 1"#,
     ] {
         assert!(text.contains(line), "missing {line}\n{text}");
     }

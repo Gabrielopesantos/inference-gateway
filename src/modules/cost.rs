@@ -115,6 +115,7 @@ fn per_mtok(entry: &Value, key: &str) -> Option<f64> {
     entry
         .get(key)
         .and_then(Value::as_f64)
+        .filter(|&usd| crate::config::valid_price(usd))
         .map(|usd| (usd * 1e12).round() / 1e6)
 }
 
@@ -155,7 +156,7 @@ fn tier(entry: &Value, base_output: f64) -> Option<Tier> {
     let (suffix, above) = entry.as_object()?.keys().find_map(|key| {
         let suffix = key.strip_prefix("input_cost_per_token")?;
         let thousands = suffix.strip_prefix("_above_")?.strip_suffix("k_tokens")?;
-        Some((suffix, thousands.parse::<u64>().ok()? * 1000))
+        Some((suffix, thousands.parse::<u64>().ok()?.checked_mul(1000)?))
     })?;
     let at = |key: &str| per_mtok(entry, &format!("{key}{suffix}"));
     Some(Tier {
@@ -301,7 +302,7 @@ fn cost(price: &Price, u: &Usage) -> Option<f64> {
     let read = u.cache_read_tokens.unwrap_or(0);
     let write = u.cache_write_tokens.unwrap_or(0);
     let write_1h = u.cache_write_1h_tokens.unwrap_or(0).min(write);
-    let uncached = total.saturating_sub(read + write);
+    let uncached = total.saturating_sub(read.saturating_add(write));
     let output = u.output_tokens.unwrap_or(0);
     let write_5m_price = price.cache_write.unwrap_or(price.input);
     let usd = uncached as f64 * price.input
@@ -327,6 +328,10 @@ impl Module for Cost {
         };
         if let Some(p) = self.price(model) {
             rec.cost_usd = cost(&p, &rec.usage);
+            return;
+        }
+        // Only upstream-reported models: requested ones are unbounded client input.
+        if rec.response_model.is_none() {
             return;
         }
         let mut warned = self.warned.lock().unwrap_or_else(PoisonError::into_inner);

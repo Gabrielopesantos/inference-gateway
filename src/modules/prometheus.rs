@@ -135,7 +135,8 @@ impl Prometheus {
 
     #[allow(clippy::cast_precision_loss)]
     fn observe(&self, r: &RequestRecord) {
-        let model = r.model().unwrap_or("unknown");
+        // Not `r.model()`: the requested model is client input, unbounded as a label.
+        let model = r.response_model.as_deref().unwrap_or("unknown");
         let provider = r.provider.as_str();
         let streaming = if r.streaming { "true" } else { "false" };
         let req = [
