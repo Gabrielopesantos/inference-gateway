@@ -110,7 +110,7 @@ pub enum StreamEvent {
     /// The first one sets TTFT.
     ContentDelta(DeltaKind),
     Usage(Usage),
-    /// `stop_reason` / `finish_reason`.
+    /// `stop_reason`/`finish_reason`.
     Stop(String),
     Error {
         kind: String,

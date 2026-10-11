@@ -115,7 +115,7 @@ async fn upstream() -> MockUpstream {
     MockUpstream::start(Script::sse(TEXT_SSE, Duration::from_millis(5))).await
 }
 
-/// Phase 3: every exchange is stored, or its drop is counted.
+/// Every exchange is stored, or its drop is counted.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "load test; needs oha"]
 async fn capture_under_load() {
@@ -179,7 +179,7 @@ criteria = {{ correct = "Fully answers", partial = "Answers part", wrong = "" }}
     (stats, scored, queued)
 }
 
-/// Phase 4: a busy eval queue does not slow the proxy.
+/// A busy eval queue does not slow the proxy.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "load test; needs oha"]
 async fn proxy_latency_with_eval_busy() {

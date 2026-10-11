@@ -110,7 +110,7 @@ fn find(prices: &Prices, model: &str) -> Option<Price> {
         .copied()
 }
 
-/// Per token → per million, without float noise such as 0.24999999999999997.
+/// Per token to per million, without float noise such as 0.24999999999999997.
 fn per_mtok(entry: &Value, key: &str) -> Option<f64> {
     entry
         .get(key)
@@ -119,14 +119,14 @@ fn per_mtok(entry: &Value, key: &str) -> Option<f64> {
         .map(|usd| (usd * 1e12).round() / 1e6)
 }
 
-/// `LiteLLM`'s `model_prices_and_context_window.json`: model id → object
+/// `LiteLLM`'s `model_prices_and_context_window.json`: model id to object
 /// with USD per token. Entries without token prices (images, audio) are
 /// skipped; batch, flex and priority prices are not read.
 fn parse_litellm(bytes: &[u8]) -> Result<Prices> {
     let list: HashMap<String, Value> = serde_json::from_slice(bytes)?;
     let prices: Prices = list
         .iter()
-        // Documents the format.
+        // The format's example entry.
         .filter(|(model, _)| model.as_str() != "sample_spec")
         .filter_map(|(model, e)| {
             let output = per_mtok(e, "output_cost_per_token")?;
@@ -251,7 +251,7 @@ async fn refresh_loop(
     }
 }
 
-/// `claude-haiku-4-5-20251001` -> `claude-haiku-4-5`, `gpt-4o-2024-08-06` -> `gpt-4o`.
+/// `claude-haiku-4-5-20251001` becomes `claude-haiku-4-5`, `gpt-4o-2024-08-06` `gpt-4o`.
 fn strip_date(model: &str) -> Option<&str> {
     model
         .match_indices('-')

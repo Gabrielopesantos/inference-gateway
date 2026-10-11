@@ -623,7 +623,7 @@ async fn tool_turn_state_shows_the_tool_calls() {
     assert!(state.contains(&format!("<calls>{name} {{")), "{state}");
 }
 
-/// `next_step` from `config/gateway.local.toml`.
+/// `next_step`, an evaluator from a local config.
 const NEXT_STEP: &str = r#"
 [[eval.evaluators]]
 name = "next_step"

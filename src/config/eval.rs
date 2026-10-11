@@ -216,7 +216,7 @@ pub struct Evaluator {
     pub pass: Option<Vec<String>>,
     /// Below it the verdict is `uncertain`; every score is stored.
     pub min_confidence: Option<f64>,
-    /// Changes with the judge model, input template or question.
+    /// Changes with the name, judge model, input template or question.
     pub version: String,
 }
 
