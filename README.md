@@ -1,13 +1,15 @@
 # inference-gateway
 
+> Pre-1.0. Config, database schema, CLI and metric names may change between versions without a migration.
+
 A gateway between LLM harnesses (Claude Code, Codex, OpenAI-SDK clients) and model providers. It forwards
 traffic unchanged and observes every exchange:
 
 - tokens, cost, TTFB, TTFT, decode throughput, errors and rate-limit headroom as Prometheus metrics
 - one OpenTelemetry span per request, with `gen_ai.*` attributes
 - every request as a row in SQLite, and prompt/response content when a capture rule matches
-- asynchronous quality scores for captured responses from a System One judge model (tested:
-  [Typesafe Jev](https://docs.typesafe.ai))
+- asynchronous quality scores for captured responses from a judge model that answers one typed question per call
+  (yes/no, a choice or a score; tested: [Typesafe Jev](https://docs.typesafe.ai))
 
 Grafana shows all of it; there is no custom UI.
 
@@ -17,22 +19,23 @@ holds no provider key.
 
 ## Quick start
 
-Needs Nix and Docker (or Podman).
+Needs Docker (or Podman) with Compose.
 
 ```sh
-nix build .#image && docker load < result
-docker compose -f deploy/compose.yaml up -d
+docker compose -f deploy/compose.yaml up -d --build
 ```
 
 Then send traffic through `http://localhost:8080` and open Grafana at http://localhost:3000. The
 [deploy README](deploy/README.md) covers the stack, ports, secrets and evaluation.
 
-Without containers:
+Without containers, with Rust 1.91 or later and a C compiler (for the bundled SQLite and zstd):
 
 ```sh
-nix develop
-cargo run -- --config config/gateway.example.toml
+cargo run --release -- --config config/gateway.example.toml
 ```
+
+The Nix flake has a dev shell (`nix develop`) with the toolchain and test tools, and builds the same image
+(`nix build .#image && docker load < result`).
 
 ## How it works
 
@@ -65,7 +68,8 @@ Clients reach an upstream at `/{upstream name}/...`.
 | harness | setting |
 |---|---|
 | Claude Code | `ANTHROPIC_BASE_URL=http://localhost:8080/anthropic` |
-| OpenAI SDK, Codex | `OPENAI_BASE_URL=http://localhost:8080/openai/v1` |
+| OpenAI SDK | `OPENAI_BASE_URL=http://localhost:8080/openai/v1` |
+| Codex | same as OpenAI SDK; forwarded but not parsed, see [Limits](#limits) |
 
 Optional request headers, read and then stripped before forwarding:
 
@@ -91,18 +95,28 @@ Two sources, each setting in exactly one:
   `[eval]`, `[otel]`) is on when its section is present.
 
 Evaluation also runs standalone against the same database: `inference-gateway eval run --config <file>`, and
-`inference-gateway eval backfill --evaluator NAME` scores already captured traces.
+`inference-gateway eval backfill --config <file> --evaluator NAME` scores already captured traces.
 
 ## Capture and privacy
 
 - Content is stored only for requests that match a capture rule; the default is no capture.
-- **With capture on, the database holds prompts and responses.** Keep it on an encrypted volume, keep rules narrow
-  and keep the retention TTL (`[capture] retention`, default 30 days; trace rows without content are kept).
-- API keys are never logged, stored or exported. Caller ids are an HMAC of the key, so they are stable but not
-  reversible.
+- **With capture on, the database holds prompts and responses.** The gateway creates it readable by its owner
+  only. Anyone who can read the file, or open Grafana with its SQLite datasource, can read the content. Keep rules
+  narrow and keep the retention TTL (`[capture] retention`, default 30 days).
+- Retention deletes content only. Trace rows (model, tokens, cost, timings, tags, session and caller ids), scores
+  and evaluation jobs are kept.
+- Evaluation sends captured content to the judge provider.
+- API keys are never logged, stored or exported. Caller ids are an HMAC of the key with `IG_IDENTITY_SECRET`, so
+  they are stable but not reversible; without the secret, records carry no caller id. Generate one with
+  `openssl rand -hex 32`.
 - Spans and metrics carry no content.
-- A gateway reachable from other machines relays for anyone who can reach it: set `[ingress] allow_cidrs` and/or
-  `require_token`.
+
+## Access
+
+- The proxy listens on `127.0.0.1:8080` by default. On any other address, without `[ingress] allow_cidrs` or
+  `require_token`, it relays for anyone who can reach it; the gateway logs a warning at startup.
+  `X-Forwarded-For` is not trusted, so behind a load balancer the allowlist sees the balancer's address.
+- The admin listener (`/healthz`, `/metrics`; default `127.0.0.1:9090`) has no authentication.
 
 ## Cost
 
@@ -123,13 +137,13 @@ start. The cost is an estimate:
   current Codex versions use.
 - The request body is buffered, up to `--max-body` (default 32 MiB). The response is streamed.
 - The gateway asks upstreams for uncompressed responses (`accept-encoding: identity`), so it can parse the copy.
-- Trace rows are never deleted. Only captured content has a retention.
 - One SQLite file with one writer: one gateway process per database.
 
 ## Metrics
 
 Served on the admin listener (`--admin-listen`, default `127.0.0.1:9090`) at `/metrics` when `[prometheus]` is set.
-Labels: `upstream, provider, model` (plus `outcome, streaming` on requests and duration).
+Labels: `upstream, provider, model` (plus `outcome, streaming` on requests and duration). `model` is the one the
+upstream reported, else `unknown`; the model a client asked for is never a label.
 
 | metric | what |
 |---|---|

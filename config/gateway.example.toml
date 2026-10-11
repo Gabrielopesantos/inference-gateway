@@ -84,8 +84,8 @@ allow_header_override = true
 match = { model = "claude-haiku-*" }
 sample = 0.25         # deterministic per trace id
 
-# Scores captured traces with a System One judge model (tested: Typesafe Jev),
-# asynchronously. Needs [store]; only captured traces with outcome ok are
+# Scores captured traces with a judge model that answers one typed question
+# per call (tested: Typesafe Jev), asynchronously. Needs [store]; only captured traces with outcome ok are
 # enqueued. Workers also run standalone:
 # `inference-gateway eval run --config <file>` on the same database.
 # [eval.worker]         # all optional
@@ -99,6 +99,8 @@ sample = 0.25         # deterministic per trace id
 # model = "jev-1.13.0"            # pin: jev-latest moves between releases
 # api_key_env = "IG_JUDGE_API_KEY"
 # max_input_tokens = 32000        # judge limit for input plus question
+# timeout = "60s"                 # per judge call
+# usd_per_mtok_input = 0.042      # for judge_cost_usd; output is not billed
 #
 # # One question per evaluator. Renaming it or editing the judge model, input,
 # # question or criteria makes a new evaluator version; `inference-gateway eval
