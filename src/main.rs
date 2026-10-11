@@ -51,11 +51,9 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         .map(|u| format!("{} -> {} ({})", u.name, u.base_url, u.provider))
         .collect();
     let mut ctx = BuildCtx::default();
-    let dispatcher = Dispatcher::start(
-        modules::build(&config, &mut ctx)?,
-        &ctx,
-        Dispatcher::QUEUE_CAPACITY,
-    );
+    let built = modules::build(&config, &mut ctx)?;
+    let module_names: Vec<&str> = built.iter().map(|m| m.name()).collect();
+    let dispatcher = Dispatcher::start(built, &ctx, Dispatcher::QUEUE_CAPACITY);
     let gw = Gateway::build(config, &args, Secrets::from_env(), &dispatcher)?;
     if gw.identity.is_none() {
         info!("{IDENTITY_SECRET_ENV} unset; records carry no caller_id");
@@ -95,6 +93,7 @@ async fn run_serve(args: ServeArgs) -> Result<()> {
         admin = %args.admin_listen,
         tls = tls.is_some(),
         ?upstreams,
+        modules = ?module_names,
         "inference-gateway starting"
     );
 
