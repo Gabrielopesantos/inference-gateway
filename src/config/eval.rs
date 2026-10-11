@@ -247,6 +247,9 @@ pub(super) fn eval_config(file: EvalFile, upstreams: &[Upstream]) -> Result<Eval
         timeout: j.timeout,
         usd_per_mtok_input: j.usd_per_mtok_input,
     };
+    if !super::valid_price(judge.usd_per_mtok_input) {
+        bail!("eval.judge.usd_per_mtok_input must be finite and not negative");
+    }
     if judge.api_key_env.is_empty() {
         bail!("eval.judge.api_key_env must not be empty");
     }

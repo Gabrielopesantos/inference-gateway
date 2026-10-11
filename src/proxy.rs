@@ -111,7 +111,10 @@ async fn send(
     }
     let mut body = read_body(body, gw.max_body).await?;
 
-    if let Some(op) = route.adapter.classify(&parts.method, rest) {
+    if let Some(op) = route
+        .adapter
+        .classify(&parts.method, rest.trim_end_matches('/'))
+    {
         let info = route.adapter.inspect_request(op, &body);
         if let Some(policy) = &gw.capture
             && policy.decide(
@@ -165,7 +168,12 @@ fn split_path(path: &str) -> (&str, &str) {
     }
 }
 
+/// Rejects dot segments: `Url::parse` resolves them, which would escape the
+/// base URL's path.
 fn upstream_url(base: &Url, rest: &str, query: Option<&str>) -> Result<Url, GatewayError> {
+    if rest.split(['/', '\\']).any(is_dot_segment) {
+        return Err(GatewayError::InvalidPath("dot segment".into()));
+    }
     let mut url = base.as_str().trim_end_matches('/').to_owned();
     url.push_str(rest);
     if let Some(q) = query {
@@ -173,6 +181,13 @@ fn upstream_url(base: &Url, rest: &str, query: Option<&str>) -> Result<Url, Gate
         url.push_str(q);
     }
     Url::parse(&url).map_err(|e| GatewayError::InvalidPath(e.to_string()))
+}
+
+fn is_dot_segment(seg: &str) -> bool {
+    matches!(
+        seg.to_ascii_lowercase().replace("%2e", ".").as_str(),
+        "." | ".."
+    )
 }
 
 fn content_length(headers: &HeaderMap) -> Option<u64> {
@@ -302,6 +317,26 @@ mod tests {
         assert_eq!(
             url("https://openrouter.ai/api/", "/v1/chat/completions", None),
             "https://openrouter.ai/api/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn rejects_dot_segments() {
+        let base = Url::parse("https://openrouter.ai/api").unwrap();
+        for rest in [
+            "/../v1/x",
+            "/v1/./x",
+            "/%2e%2e/x",
+            "/.%2E/x",
+            "/%2e/x",
+            "/v1/..",
+            "/v1\\..\\x",
+        ] {
+            assert!(upstream_url(&base, rest, None).is_err(), "{rest}");
+        }
+        assert_eq!(
+            url("https://openrouter.ai/api", "/v1/...x/.y", None),
+            "https://openrouter.ai/api/v1/...x/.y"
         );
     }
 

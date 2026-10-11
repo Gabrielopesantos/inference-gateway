@@ -45,18 +45,40 @@ impl fmt::Debug for Gateway {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct IngressPolicy {
     pub allow_cidrs: Vec<IpNet>,
     /// `Some` when `x-gateway-token` is required.
     pub token: Option<String>,
 }
 
+impl fmt::Debug for IngressPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IngressPolicy")
+            .field("allow_cidrs", &self.allow_cidrs)
+            .field("token", &redacted(self.token.as_ref()))
+            .finish()
+    }
+}
+
 /// Env-only settings, passed in so tests need not touch the process env.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Secrets {
     pub gateway_token: Option<String>,
     pub identity_secret: Option<String>,
+}
+
+impl fmt::Debug for Secrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Secrets")
+            .field("gateway_token", &redacted(self.gateway_token.as_ref()))
+            .field("identity_secret", &redacted(self.identity_secret.as_ref()))
+            .finish()
+    }
+}
+
+fn redacted(v: Option<&String>) -> Option<&'static str> {
+    v.map(|_| "<redacted>")
 }
 
 impl Secrets {

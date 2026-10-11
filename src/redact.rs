@@ -13,6 +13,8 @@ const SECRET_HEADERS: &[&str] = &[
     "proxy-authorization",
     "x-api-key",
     "api-key",
+    "x-goog-api-key",
+    "x-auth-token",
     "cookie",
     "set-cookie",
     "x-gateway-token",

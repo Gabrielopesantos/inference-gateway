@@ -94,9 +94,11 @@ pub async fn serve(
             .await
     };
 
-    let (proxy, admin) = tokio::join!(proxy, admin);
-    proxy.context("proxy listener")?;
-    admin.context("admin listener")?;
+    // Either listener failing ends both, so a dead proxy cannot hide behind a
+    // healthy `/healthz`.
+    tokio::try_join!(async { proxy.await.context("proxy listener") }, async {
+        admin.await.context("admin listener")
+    },)?;
     Ok(())
 }
 

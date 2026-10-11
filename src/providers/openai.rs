@@ -297,6 +297,9 @@ struct OutFunction {
     arguments: Option<String>,
 }
 
+/// Bounds the upstream-chosen `index`; calls at or past it are dropped.
+const MAX_TOOL_CALLS: usize = 128;
+
 #[derive(Default)]
 struct Accumulator {
     out: Output,
@@ -321,6 +324,9 @@ impl Accumulator {
             }
             for (pos, call) in m.tool_calls.into_iter().flatten().enumerate() {
                 let i = call.index.unwrap_or(pos);
+                if i >= MAX_TOOL_CALLS {
+                    continue;
+                }
                 if self.calls.len() <= i {
                     self.calls.resize_with(i + 1, Default::default);
                 }
@@ -589,6 +595,16 @@ mod tests {
                 input: serde_json::json!({"city": "Lisbon"}),
             }]
         );
+    }
+
+    #[test]
+    fn ignores_out_of_range_tool_call_index() {
+        let call = |index: u64| serde_json::json!({"index": index, "id": "c", "function": {"name": "f", "arguments": "{}"}});
+        let json = response(
+            &serde_json::json!({"tool_calls": [call(u64::MAX), call(1 << 40), call(0)]}),
+            "tool_calls",
+        );
+        assert_eq!(extract(&json, false).tool_calls.len(), 1);
     }
 
     #[test]

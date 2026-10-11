@@ -11,6 +11,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
+use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 use crate::error::GatewayError;
@@ -41,7 +42,9 @@ pub async fn check(
             .get(TOKEN_HEADER)
             .map(HeaderValue::as_bytes)
             .unwrap_or_default();
-        if !bool::from(given.ct_eq(expected.as_bytes())) {
+        // Digests have equal length, so the compare leaks no length either.
+        let eq = Sha256::digest(given)[..].ct_eq(&Sha256::digest(expected)[..]);
+        if !bool::from(eq) {
             return Err(GatewayError::Unauthorized);
         }
     }

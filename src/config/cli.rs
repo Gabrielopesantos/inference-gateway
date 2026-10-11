@@ -118,12 +118,12 @@ pub struct ServeArgs {
     pub max_body: ByteSize,
 
     /// Timeout for opening a connection to an upstream.
-    #[arg(long, env = "IG_CONNECT_TIMEOUT", default_value = "10s", value_parser = parse_duration)]
+    #[arg(long, env = "IG_CONNECT_TIMEOUT", default_value = "10s", value_parser = parse_timeout)]
     pub connect_timeout: Duration,
 
     /// Max silence from an upstream, before the response headers and between
     /// body chunks.
-    #[arg(long, env = "IG_IDLE_TIMEOUT", default_value = "300s", value_parser = parse_duration)]
+    #[arg(long, env = "IG_IDLE_TIMEOUT", default_value = "300s", value_parser = parse_timeout)]
     pub idle_timeout: Duration,
 
     /// On SIGTERM/SIGINT, how long in-flight streams may finish before the
@@ -156,6 +156,13 @@ pub enum LogFormat {
 
 fn parse_duration(s: &str) -> Result<Duration, humantime::DurationError> {
     humantime::parse_duration(s)
+}
+
+fn parse_timeout(s: &str) -> Result<Duration, String> {
+    match humantime::parse_duration(s) {
+        Ok(d) if d.is_zero() => Err("must not be zero".into()),
+        r => r.map_err(|e| e.to_string()),
+    }
 }
 
 fn parse_since(s: &str) -> Result<SystemTime, String> {

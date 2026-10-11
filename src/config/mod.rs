@@ -342,7 +342,24 @@ fn validate_cost(cost: &CostFile) -> Result<()> {
     if cost.refresh.is_zero() {
         bail!("cost.refresh must not be zero");
     }
+    for (model, p) in &cost.models {
+        let rates = [
+            Some(p.input),
+            Some(p.output),
+            p.cache_read,
+            p.cache_write,
+            p.cache_write_1h,
+        ];
+        if !rates.into_iter().flatten().all(valid_price) {
+            bail!("cost.models.{model:?}: prices must be finite and not negative");
+        }
+    }
     Ok(())
+}
+
+#[must_use]
+pub fn valid_price(usd: f64) -> bool {
+    usd.is_finite() && usd >= 0.0
 }
 
 fn otel_config(file: OtelFile) -> Result<OtelConfig> {
@@ -361,6 +378,9 @@ fn otel_config(file: OtelFile) -> Result<OtelConfig> {
     }
     if file.flush.is_zero() {
         bail!("otel.flush must not be zero");
+    }
+    if file.timeout.is_zero() {
+        bail!("otel.timeout must not be zero");
     }
     if file.service_name.is_empty() {
         bail!("otel.service_name must not be empty");
@@ -434,8 +454,8 @@ fn parse_match(m: MatchFile, upstreams: &[Upstream]) -> Result<capture::Match> {
 
 /// An upstream name is one URL path segment.
 fn validate_name(name: &str) -> Result<()> {
-    if name.is_empty() {
-        bail!("must not be empty");
+    if name.is_empty() || name == "." || name == ".." {
+        bail!("must not be empty, \".\" or \"..\"");
     }
     if !name
         .chars()

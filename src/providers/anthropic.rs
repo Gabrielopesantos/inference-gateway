@@ -263,7 +263,11 @@ impl RawUsage {
             Some(input) => {
                 let read = self.cache_read_input_tokens.unwrap_or(0);
                 let write = self.cache_creation_input_tokens.unwrap_or(0);
-                (Some(input + read + write), Some(read), Some(write))
+                (
+                    Some(input.saturating_add(read).saturating_add(write)),
+                    Some(read),
+                    Some(write),
+                )
             }
             None => (
                 None,
