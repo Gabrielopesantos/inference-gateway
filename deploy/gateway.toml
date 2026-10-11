@@ -45,6 +45,8 @@ allow_header_override = true
 # [[eval.evaluators]]
 # name = "answered"
 # match = { stop_reason = ["end_turn"], structured_output = false }
+# pass = ["correct", "partial"]
+# min_confidence = 0.7
 # state = """
 # <user>{{ last_user_message }}</user>
 # <response>{{ output_text }}</response>
@@ -63,6 +65,7 @@ allow_header_override = true
 # [[eval.evaluators]]
 # name = "helpful"
 # match = { stop_reason = ["end_turn"], structured_output = false }
+# pass = "yes"
 # state = """
 # <user>{{ last_user_message }}</user>
 # <response>{{ output_text }}</response>
