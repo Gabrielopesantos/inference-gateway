@@ -61,36 +61,6 @@
           "text": "All",
           "value": "$__all"
         }
-      },
-      {
-        "name": "bad_labels",
-        "label": "bad labels (comma-separated)",
-        "type": "textbox",
-        "query": "wrong,refused",
-        "current": {
-          "text": "wrong,refused",
-          "value": "wrong,refused"
-        }
-      },
-      {
-        "name": "min_confidence",
-        "label": "min confidence",
-        "type": "textbox",
-        "query": "0.7",
-        "current": {
-          "text": "0.7",
-          "value": "0.7"
-        }
-      },
-      {
-        "name": "low_score",
-        "label": "low score below",
-        "type": "textbox",
-        "query": "1",
-        "current": {
-          "text": "1",
-          "value": "1"
-        }
       }
     ]
   },
@@ -99,13 +69,13 @@
       "type": "row",
       "title": "Overview",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "x": 0,
         "y": 0,
         "w": 24,
         "h": 1
       },
-      "panels": [],
       "id": 1
     },
     {
@@ -130,8 +100,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT count(*) AS scores FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
-          "queryText": "SELECT count(*) AS scores FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "rawQueryText": "SELECT count(*) AS scores FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT count(*) AS scores FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
           "timeColumns": [
             "time"
           ]
@@ -175,8 +145,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
-          "queryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "rawQueryText": "SELECT 1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT 1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
           "timeColumns": [
             "time"
           ]
@@ -191,18 +161,18 @@
         "colorMode": "none",
         "graphMode": "none"
       },
-      "description": "Scores that are not false, not a bad label and not under low_score. Confidence is ignored.",
+      "description": "pass / (pass + fail) under each evaluator's pass rule. Uncertain scores and evaluators without a rule are left out.",
       "gridPos": {
         "x": 4,
         "y": 1,
         "w": 4,
         "h": 4
       },
-      "id": 19
+      "id": 3
     },
     {
       "type": "stat",
-      "title": "Low score or confidence",
+      "title": "Uncertain",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
@@ -221,8 +191,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence) THEN 1.0 ELSE 0.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
-          "queryText": "SELECT avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence) THEN 1.0 ELSE 0.0 END) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "rawQueryText": "SELECT avg(s.verdict = 'uncertain') AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL",
+          "queryText": "SELECT avg(s.verdict = 'uncertain') AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL",
           "timeColumns": [
             "time"
           ]
@@ -243,7 +213,8 @@
         "w": 4,
         "h": 4
       },
-      "id": 3
+      "id": 4,
+      "description": "Share of scores with a verdict whose confidence is below the evaluator's min_confidence."
     },
     {
       "type": "stat",
@@ -266,8 +237,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
-          "queryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "rawQueryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT avg(coalesce(s.input_truncated, 0)) AS share FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
           "timeColumns": [
             "time"
           ]
@@ -288,7 +259,7 @@
         "w": 4,
         "h": 4
       },
-      "id": 4
+      "id": 5
     },
     {
       "type": "stat",
@@ -311,8 +282,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT sum(s.judge_cost_usd) AS cost FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
-          "queryText": "SELECT sum(s.judge_cost_usd) AS cost FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "rawQueryText": "SELECT sum(s.judge_cost_usd) AS cost FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
+          "queryText": "SELECT sum(s.judge_cost_usd) AS cost FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})",
           "timeColumns": [
             "time"
           ]
@@ -333,7 +304,7 @@
         "w": 4,
         "h": 4
       },
-      "id": 5
+      "id": 6
     },
     {
       "type": "stat",
@@ -380,24 +351,24 @@
         "w": 4,
         "h": 4
       },
-      "id": 20
+      "id": 7
     },
     {
       "type": "row",
-      "title": "Scores",
+      "title": "Verdicts",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "x": 0,
         "y": 5,
         "w": 24,
         "h": 1
       },
-      "panels": [],
-      "id": 6
+      "id": 8
     },
     {
       "type": "timeseries",
-      "title": "Pass rate over time by evaluator version",
+      "title": "Pass rate by evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
@@ -423,8 +394,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS pass_rate\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
-          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(CASE WHEN (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)) THEN 0.0 ELSE 1.0 END) AS pass_rate\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('pass', 'fail')\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('pass', 'fail')\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": [
             "time"
           ]
@@ -440,18 +411,93 @@
           "sort": "desc"
         }
       },
-      "description": "Same verdict as the Pass rate stat.",
+      "description": "Same rule as the Pass rate stat.",
       "gridPos": {
         "x": 0,
         "y": 6,
         "w": 12,
         "h": 9
       },
-      "id": 7
+      "id": 9
+    },
+    {
+      "type": "table",
+      "title": "Verdicts by model",
+      "description": "Scores with a verdict, per model and evaluator.",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "auto"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pass_rate"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "table",
+          "rawQueryText": "SELECT coalesce(coalesce(t.response_model, t.requested_model), '(none)') AS model,\n       s.name AS evaluator,\n       sum(s.verdict = 'pass') AS pass,\n       sum(s.verdict = 'fail') AS fail,\n       sum(s.verdict = 'uncertain') AS uncertain,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL\nGROUP BY 1, 2\nORDER BY 2, pass_rate",
+          "queryText": "SELECT coalesce(coalesce(t.response_model, t.requested_model), '(none)') AS model,\n       s.name AS evaluator,\n       sum(s.verdict = 'pass') AS pass,\n       sum(s.verdict = 'fail') AS fail,\n       sum(s.verdict = 'uncertain') AS uncertain,\n       1.0 * sum(s.verdict = 'pass') / sum(s.verdict IN ('pass', 'fail')) AS pass_rate\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IS NOT NULL\nGROUP BY 1, 2\nORDER BY 2, pass_rate",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 12,
+        "h": 9
+      },
+      "id": 10
+    },
+    {
+      "type": "row",
+      "title": "Values",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 1
+      },
+      "id": 11
     },
     {
       "type": "timeseries",
-      "title": "Mean value by model and evaluator version",
+      "title": "Score mean by model and evaluator version",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
@@ -474,8 +520,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.value_num IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
-          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.value_num IS NOT NULL\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'numeric'\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'numeric'\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": [
             "time"
           ]
@@ -491,14 +537,67 @@
           "sort": "desc"
         }
       },
-      "description": "noul: probability of yes; score: probability-weighted level index",
+      "description": "Probability-weighted level index; 0 is the first criterion.",
       "gridPos": {
-        "x": 12,
-        "y": 6,
+        "x": 0,
+        "y": 16,
         "w": 12,
         "h": 9
       },
-      "id": 8
+      "id": 12
+    },
+    {
+      "type": "timeseries",
+      "title": "noul P(yes) by model and evaluator version",
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "gateway-sqlite"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "showPoints": "always"
+          },
+          "displayName": "${__field.labels.series}",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "gateway-sqlite"
+          },
+          "queryType": "time series",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'bool'\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time,\n       coalesce(t.response_model, t.requested_model) || ' \u00b7 ' || s.name || '@' || substr(s.evaluator_version, 1, 8) AS series,\n       avg(s.value_num) AS value\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.data_type = 'bool'\nGROUP BY 1, 2\nORDER BY 1",
+          "timeColumns": [
+            "time"
+          ]
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Mean probability of yes.",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 9
+      },
+      "id": 13
     },
     {
       "type": "table",
@@ -538,8 +637,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
-          "queryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
+          "rawQueryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       s.label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
+          "queryText": "SELECT coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       substr(s.evaluator_version, 1, 8) AS version,\n       s.label,\n       count(*) AS scores,\n       round(1.0 * count(*) / sum(count(*)) OVER (PARTITION BY coalesce(t.response_model, t.requested_model), s.name, s.evaluator_version), 3) AS share,\n       round(avg(s.value_num), 3) AS mean_value,\n       round(avg(s.confidence), 3) AS mean_confidence\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2, 3, 4\nORDER BY 2, 3, 1, scores DESC",
           "timeColumns": [
             "time"
           ]
@@ -551,11 +650,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 15,
+        "y": 25,
         "w": 12,
         "h": 9
       },
-      "id": 9
+      "id": 14
     },
     {
       "type": "histogram",
@@ -580,8 +679,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT s.confidence FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
-          "queryText": "SELECT s.confidence FROM scores s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
+          "rawQueryText": "SELECT s.confidence FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
+          "queryText": "SELECT s.confidence FROM score_verdicts s JOIN traces t ON t.id = s.trace_id WHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.confidence IS NOT NULL",
           "timeColumns": [
             "time"
           ]
@@ -595,24 +694,24 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 15,
+        "y": 25,
         "w": 12,
         "h": 9
       },
-      "id": 10
+      "id": 15
     },
     {
       "type": "row",
       "title": "Judge",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 34,
         "w": 24,
         "h": 1
       },
-      "panels": [],
-      "id": 11
+      "id": 16
     },
     {
       "type": "bargauge",
@@ -655,11 +754,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 25,
+        "y": 35,
         "w": 8,
         "h": 8
       },
-      "id": 12
+      "id": 17
     },
     {
       "type": "table",
@@ -727,8 +826,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
-          "queryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
+          "rawQueryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
+          "queryText": "SELECT s.judge_model,\n       count(*) AS calls,\n       round(avg(s.judge_latency_ms)) AS mean_latency_ms,\n       max(s.judge_latency_ms) AS max_latency_ms,\n       round(avg(s.judge_input_tokens)) AS mean_input_tokens,\n       sum(s.judge_cost_usd) AS cost_usd\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1\nORDER BY calls DESC",
           "timeColumns": [
             "time"
           ]
@@ -740,11 +839,11 @@
       },
       "gridPos": {
         "x": 8,
-        "y": 25,
+        "y": 35,
         "w": 16,
         "h": 8
       },
-      "id": 13
+      "id": 18
     },
     {
       "type": "timeseries",
@@ -773,8 +872,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "time series",
-          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
-          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM scores s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "rawQueryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
+          "queryText": "SELECT (s.created_at / $__interval_ms) * $__interval_ms / 1000 AS time, s.judge_model AS series, sum(s.judge_cost_usd) * 3600000.0 / $__interval_ms AS cost\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote})\nGROUP BY 1, 2\nORDER BY 1",
           "timeColumns": [
             "time"
           ]
@@ -792,11 +891,11 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 33,
+        "y": 43,
         "w": 12,
         "h": 8
       },
-      "id": 14
+      "id": 19
     },
     {
       "type": "timeseries",
@@ -845,11 +944,11 @@
       "description": "in-process worker only; `eval run` exports no metrics",
       "gridPos": {
         "x": 12,
-        "y": 33,
+        "y": 43,
         "w": 12,
         "h": 8
       },
-      "id": 15
+      "id": 20
     },
     {
       "type": "table",
@@ -922,28 +1021,28 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 41,
+        "y": 51,
         "w": 24,
         "h": 8
       },
-      "id": 16
+      "id": 21
     },
     {
       "type": "row",
       "title": "Review",
       "collapsed": false,
+      "panels": [],
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 59,
         "w": 24,
         "h": 1
       },
-      "panels": [],
-      "id": 17
+      "id": 22
     },
     {
       "type": "table",
-      "title": "Low score or low confidence",
+      "title": "Fail or uncertain",
       "datasource": {
         "type": "frser-sqlite-datasource",
         "uid": "gateway-sqlite"
@@ -1022,8 +1121,8 @@
             "uid": "gateway-sqlite"
           },
           "queryType": "table",
-          "rawQueryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM scores s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence)\nORDER BY s.created_at DESC\nLIMIT 50",
-          "queryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       coalesce(s.value_label, CASE s.value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM scores s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND (s.value_bool = 0\n        OR ',$bad_labels,' LIKE '%,' || s.value_label || ',%'\n        OR (s.data_type = 'numeric' AND s.value_num < $low_score)\n        OR s.confidence < $min_confidence)\nORDER BY s.created_at DESC\nLIMIT 50",
+          "rawQueryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       s.verdict,\n       s.label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('fail', 'uncertain')\nORDER BY s.created_at DESC\nLIMIT 50",
+          "queryText": "SELECT s.created_at / 1000.0 AS time,\n       coalesce(t.response_model, t.requested_model) AS model,\n       s.name AS evaluator,\n       s.verdict,\n       s.label,\n       round(s.value_num, 3) AS value,\n       round(s.confidence, 3) AS confidence,\n       -- The tail: Claude Code puts injected context before the request.\n       CASE WHEN length(o.last_user_text) > 400 THEN '\u2026' || substr(o.last_user_text, -400) ELSE o.last_user_text END AS last_user_message,\n       substr(o.output_text, 1, 400) AS output,\n       lower(hex(coalesce(t.otel_trace_id, t.id))) AS trace\nFROM score_verdicts s JOIN traces t ON t.id = s.trace_id\nLEFT JOIN trace_outputs o ON o.trace_id = s.trace_id\nWHERE s.created_at >= $__from AND s.created_at < $__to AND s.name IN (${evaluator:singlequote}) AND s.evaluator_version IN (${version:singlequote}) AND s.verdict IN ('fail', 'uncertain')\nORDER BY s.created_at DESC\nLIMIT 50",
           "timeColumns": [
             "time"
           ]
@@ -1033,14 +1132,14 @@
         "showHeader": true,
         "cellHeight": "sm"
       },
-      "description": "bad: noul false, a label in bad_labels, a score below low_score, or confidence below min_confidence. Content expires with capture retention.",
+      "description": "Newest first. Content expires with capture retention.",
       "gridPos": {
         "x": 0,
-        "y": 50,
+        "y": 60,
         "w": 24,
         "h": 14
       },
-      "id": 18
+      "id": 23
     }
   ]
 }
