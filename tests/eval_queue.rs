@@ -62,7 +62,7 @@ fn status(conn: &Connection) -> (String, i64) {
 }
 
 fn claim(conn: &Connection, now: i64) -> Vec<Job> {
-    queue::claim(conn, &[V.to_owned()], 10, LEASE, now).unwrap()
+    queue::claim(conn, &[V.to_owned()], 10, LEASE, 3, now).unwrap()
 }
 
 #[test]
@@ -87,6 +87,26 @@ fn expired_lease_is_reclaimed_and_scored_once() {
         .unwrap();
     assert_eq!(scores, 1);
     assert_eq!(status(&conn), ("done".into(), 2));
+}
+
+#[test]
+fn lease_expiring_on_the_last_attempt_fails_the_job() {
+    let (_dir, conn) = db();
+    job(&conn, 1);
+    for (now, attempts) in [(0, 1), (2000, 2), (4000, 3)] {
+        assert_eq!(claim(&conn, now)[0].attempts, attempts);
+    }
+    assert!(claim(&conn, 6000).is_empty());
+    assert_eq!(status(&conn), ("failed".into(), 3));
+}
+
+#[test]
+fn lost_lease_does_not_report_failure() {
+    let (_dir, mut conn) = db();
+    job(&conn, 1);
+    let first = claim(&conn, 0).remove(0);
+    claim(&conn, 2000);
+    assert!(!queue::retry(&mut conn, &first, 1, Duration::ZERO, "x", 2100).unwrap());
 }
 
 #[test]
@@ -122,7 +142,7 @@ fn other_versions_are_not_claimed() {
     let (_dir, conn) = db();
     job(&conn, 1);
     assert!(
-        queue::claim(&conn, &["v2".to_owned()], 10, LEASE, 0)
+        queue::claim(&conn, &["v2".to_owned()], 10, LEASE, 3, 0)
             .unwrap()
             .is_empty()
     );
@@ -246,7 +266,7 @@ fn claim_takes_at_most_n_in_id_order() {
     for t in 1..=3 {
         job(&conn, t);
     }
-    let jobs = queue::claim(&conn, &[V.to_owned()], 2, LEASE, 0).unwrap();
+    let jobs = queue::claim(&conn, &[V.to_owned()], 2, LEASE, 3, 0).unwrap();
     assert_eq!(
         jobs.iter().map(|j| j.trace_id.clone()).collect::<Vec<_>>(),
         [vec![1], vec![2]]

@@ -93,9 +93,9 @@ impl Worker {
             }
             let free = self.concurrency - tasks.len();
             if free > 0 {
-                let (versions, lease) = (self.versions.clone(), self.lease);
+                let (versions, lease, max) = (self.versions.clone(), self.lease, self.max_attempts);
                 match self
-                    .db(move |c| queue::claim(c, &versions, free, lease, now_ms()))
+                    .db(move |c| queue::claim(c, &versions, free, lease, max, now_ms()))
                     .await
                 {
                     Ok(jobs) => {

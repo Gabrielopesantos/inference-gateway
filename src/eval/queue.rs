@@ -50,7 +50,8 @@ fn ms(d: Duration) -> i64 {
 
 /// Leases up to `n` due jobs of the given evaluator versions: pending ones
 /// past `not_before`, and running ones whose lease expired. Jobs of versions
-/// not configured here stay queued.
+/// not configured here stay queued. An expired lease on the last attempt
+/// fails the job, so a job that kills its task cannot loop forever.
 ///
 /// # Errors
 ///
@@ -60,8 +61,16 @@ pub fn claim(
     versions: &[String],
     n: usize,
     lease: Duration,
+    max_attempts: u32,
     now_ms: i64,
 ) -> Result<Vec<Job>> {
+    conn.prepare_cached(
+        "UPDATE eval_jobs
+            SET status = 'failed', lease_until = NULL,
+                last_error = 'lease expired on the last attempt'
+          WHERE status = 'running' AND lease_until < ?1 AND attempts >= ?2",
+    )?
+    .execute(params![now_ms, max_attempts])?;
     let mut stmt = conn.prepare_cached(
         "UPDATE eval_jobs
             SET status = 'running', attempts = attempts + 1, lease_until = ?1 + ?2
@@ -187,7 +196,7 @@ pub fn complete(conn: &mut Connection, job: &Job, s: &Score, now_ms: i64) -> Res
 }
 
 /// Back to `pending` after `delay`, or `failed` once `max_attempts` are used.
-/// Returns whether the job failed for good.
+/// Returns whether this call failed the job for good.
 ///
 /// # Errors
 ///
@@ -203,14 +212,14 @@ pub fn retry(
     let failed = job.attempts >= max_attempts;
     let tx = conn.transaction()?;
     let status = if failed { "failed" } else { "pending" };
-    guarded(
+    let applied = guarded(
         &tx,
         job,
         "status = ?3, not_before = ?4, last_error = ?5",
-        &[&status, &(now_ms + ms(delay)), &error],
+        &[&status, &now_ms.saturating_add(ms(delay)), &error],
     )?;
     tx.commit()?;
-    Ok(failed)
+    Ok(failed && applied)
 }
 
 /// `failed` without further attempts.

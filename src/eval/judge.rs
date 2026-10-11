@@ -16,6 +16,7 @@ use crate::config::eval::{Judge as JudgeConfig, Question};
 
 /// Error bodies kept in `last_error`.
 const MAX_ERROR_BODY: usize = 2048;
+const MAX_RETRY_AFTER: Duration = Duration::from_hours(1);
 
 pub struct Judge {
     client: reqwest::Client,
@@ -272,21 +273,22 @@ fn transport(e: reqwest::Error) -> JudgeError {
 }
 
 /// `retry-after-ms` first, then `retry-after` in seconds or as an HTTP date.
+/// Capped at `MAX_RETRY_AFTER`.
 fn retry_after(headers: &HeaderMap, now: SystemTime) -> Option<Duration> {
     let get = |name| headers.get(name).and_then(|v| v.to_str().ok());
-    if let Some(ms) = get("retry-after-ms").and_then(|v| v.trim().parse::<f64>().ok())
-        && ms.is_finite()
-        && ms >= 0.0
-    {
-        return Some(Duration::from_secs_f64(ms / 1000.0));
-    }
-    let v = get("retry-after")?.trim();
-    if let Ok(secs) = v.parse::<f64>() {
-        return (secs.is_finite() && secs >= 0.0).then(|| Duration::from_secs_f64(secs));
-    }
-    httpdate::parse_http_date(v)
-        .ok()
-        .map(|at| at.duration_since(now).unwrap_or_default())
+    let num = |name| get(name)?.trim().parse::<f64>().ok();
+    // `>=` is false for NaN; `min` keeps infinity out of `from_secs_f64`.
+    let secs =
+        |s: f64| (s >= 0.0).then(|| Duration::from_secs_f64(s.min(MAX_RETRY_AFTER.as_secs_f64())));
+    let after = num("retry-after-ms")
+        .and_then(|ms| secs(ms / 1000.0))
+        .or_else(|| match num("retry-after") {
+            Some(s) => secs(s),
+            None => httpdate::parse_http_date(get("retry-after")?.trim())
+                .ok()
+                .map(|at| at.duration_since(now).unwrap_or_default()),
+        });
+    after.map(|d| d.min(MAX_RETRY_AFTER))
 }
 
 type Validated = (Verdict, Option<f64>, BTreeMap<String, f64>);
@@ -522,6 +524,10 @@ mod tests {
         let date = httpdate::fmt_http_date(now + Duration::from_secs(30));
         assert_eq!(h(&[("retry-after", &date)]), Some(Duration::from_secs(30)));
         assert_eq!(h(&[("retry-after", "soon")]), None);
+        assert_eq!(h(&[("retry-after", "-1")]), None);
+        assert_eq!(h(&[("retry-after", "NaN")]), None);
+        assert_eq!(h(&[("retry-after", "1e20")]), Some(MAX_RETRY_AFTER));
+        assert_eq!(h(&[("retry-after-ms", "1e300")]), Some(MAX_RETRY_AFTER));
     }
 
     #[test]
