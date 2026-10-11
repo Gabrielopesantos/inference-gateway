@@ -46,9 +46,10 @@ fn now_ms() -> i64 {
 impl Worker {
     /// # Errors
     ///
-    /// Database cannot be opened.
+    /// Database cannot be opened or written.
     pub fn new(cfg: &EvalConfig, store: Store, judge: Judge, metrics: Metrics) -> Result<Self> {
-        let conn = crate::store::open_writer(store.path())?;
+        let mut conn = crate::store::open_writer(store.path())?;
+        queue::register(&mut conn, &cfg.evaluators, now_ms()).context("registering evaluators")?;
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             store,

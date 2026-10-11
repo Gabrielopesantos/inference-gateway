@@ -11,6 +11,7 @@ use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use sha2::{Digest, Sha256};
 
+use crate::config::eval::Evaluator;
 use crate::providers::ProviderKind;
 
 const BACKOFF_BASE: Duration = Duration::from_secs(1);
@@ -252,6 +253,36 @@ pub fn counts(conn: &Connection) -> Result<Vec<(String, i64)>> {
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<_, _>>()?;
     Ok(rows)
+}
+
+/// Writes each evaluator's pass rule for `score_verdicts`. Rows of
+/// evaluators no longer configured stay.
+///
+/// # Errors
+///
+/// Database error.
+pub fn register(conn: &mut Connection, evaluators: &[Evaluator], now_ms: i64) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare_cached(
+            "INSERT INTO evaluators (name, kind, pass, min_confidence, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (name) DO UPDATE SET kind = excluded.kind, pass = excluded.pass,
+                 min_confidence = excluded.min_confidence, updated_at = excluded.updated_at",
+        )?;
+        for e in evaluators {
+            let pass = e.pass.as_ref().map(serde_json::to_string).transpose()?;
+            stmt.execute(params![
+                e.name,
+                e.question.kind(),
+                pass,
+                e.min_confidence,
+                now_ms
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 /// Exponential from 1 s, capped at 5 min, with jitter in `[50%, 100%]`;

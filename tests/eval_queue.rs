@@ -130,6 +130,112 @@ fn other_versions_are_not_claimed() {
 }
 
 #[test]
+fn verdicts_follow_the_registered_pass_rule() {
+    let (_dir, mut conn) = db();
+    let cfg = |pass: &str| {
+        inference_gateway::config::Config::parse(&config(
+            &[("a", "anthropic", "http://x")],
+            &format!(
+                r#"[store]
+path = "g.db"
+
+[eval.judge]
+base_url = "https://x"
+model = "jev"
+api_key_env = "K"
+
+[[eval.evaluators]]
+name = "refused"
+state = "x"
+pass = "no"
+question = {{ type = "noul", instructions = "Refused?" }}
+
+[[eval.evaluators]]
+name = "answered"
+state = "x"
+min_confidence = 0.7
+{pass}
+question = {{ type = "choice", instructions = "Answered?", criteria = {{ correct = "", partial = "", wrong = "" }} }}
+
+[[eval.evaluators]]
+name = "level"
+state = "x"
+pass = ["good"]
+question = {{ type = "score", instructions = "Level?", criteria = ["bad", "good"] }}
+"#
+            ),
+        ))
+        .unwrap()
+        .eval
+        .unwrap()
+        .evaluators
+    };
+    queue::register(&mut conn, &cfg("pass = [\"correct\", \"partial\"]"), 1).unwrap();
+
+    let rows = [
+        ("refused", "bool", Some(false), None, None),
+        ("refused", "bool", Some(true), None, None),
+        ("answered", "categorical", None, Some("partial"), Some(0.9)),
+        ("answered", "categorical", None, Some("wrong"), Some(0.9)),
+        ("answered", "categorical", None, Some("correct"), Some(0.5)),
+        ("level", "numeric", None, Some("good"), Some(0.9)),
+        ("unknown", "categorical", None, Some("x"), Some(0.9)),
+    ];
+    for (i, (name, data_type, b, label, confidence)) in rows.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO traces (id, started_at, upstream, provider, method, path, streaming,
+                                 tags, outcome, duration_ms, chunk_count, captured)
+             VALUES (?1, 0, 'a', 'anthropic', 'POST', '/v1/messages', 1, '{}', 'ok', 1, 1, 1)",
+            [[u8::try_from(i).unwrap()]],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO scores (trace_id, name, data_type, value_bool, value_label, confidence,
+                                 source, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'judge', 0)",
+            params![
+                [u8::try_from(i).unwrap()],
+                name,
+                data_type,
+                b,
+                label,
+                confidence
+            ],
+        )
+        .unwrap();
+    }
+    let verdicts = |conn: &Connection| -> Vec<(String, Option<String>)> {
+        conn.prepare("SELECT label, verdict FROM score_verdicts ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    let expect = |v: &[(&str, Option<&str>)]| -> Vec<(String, Option<String>)> {
+        v.iter()
+            .map(|(l, v)| ((*l).to_owned(), v.map(str::to_owned)))
+            .collect()
+    };
+    assert_eq!(
+        verdicts(&conn),
+        expect(&[
+            ("false", Some("pass")),
+            ("true", Some("fail")),
+            ("partial", Some("pass")),
+            ("wrong", Some("fail")),
+            ("correct", Some("uncertain")),
+            ("good", Some("pass")),
+            ("x", None),
+        ])
+    );
+
+    // A changed rule applies to stored scores; no rule gives no verdict.
+    queue::register(&mut conn, &cfg(""), 2).unwrap();
+    assert_eq!(verdicts(&conn)[2], ("partial".to_owned(), None));
+}
+
+#[test]
 fn claim_takes_at_most_n_in_id_order() {
     let (_dir, conn) = db();
     for t in 1..=3 {

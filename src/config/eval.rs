@@ -51,7 +51,17 @@ pub struct EvaluatorFile {
     pub sample: f64,
     pub state: String,
     pub question: Question,
+    pub pass: Option<PassFile>,
     pub min_confidence: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum PassFile {
+    /// noul: `yes` or `no`.
+    Answer(String),
+    /// choice and score: labels from `criteria`.
+    Labels(Vec<String>),
 }
 
 /// Sent to the judge as is; also hashed into the evaluator version.
@@ -167,7 +177,10 @@ pub struct Evaluator {
     /// minijinja template; compiled at validation.
     pub state: String,
     pub question: Question,
-    /// For dashboards and SQL only; every score is stored.
+    /// Score labels that pass, as stored (noul: `true` / `false`); `None`
+    /// gives no verdict. Not part of the version.
+    pub pass: Option<Vec<String>>,
+    /// Below it the verdict is `uncertain`; every score is stored.
     pub min_confidence: Option<f64>,
     /// Changes with the judge model, state template or question.
     pub version: String,
@@ -253,6 +266,11 @@ fn evaluator(e: EvaluatorFile, model: &str, upstreams: &[Upstream]) -> Result<Ev
     minijinja::Environment::new()
         .template_from_str(&e.state)
         .context("state template")?;
+    let pass = e
+        .pass
+        .map(|p| pass_labels(p, &e.question))
+        .transpose()
+        .context("pass")?;
     let version = version(model, &e.state, &e.question)?;
     Ok(Evaluator {
         name: e.name,
@@ -260,9 +278,39 @@ fn evaluator(e: EvaluatorFile, model: &str, upstreams: &[Upstream]) -> Result<Ev
         sample: e.sample,
         state: e.state,
         question: e.question,
+        pass,
         min_confidence: e.min_confidence,
         version,
     })
+}
+
+fn pass_labels(pass: PassFile, question: &Question) -> Result<Vec<String>> {
+    let labels = match (question, pass) {
+        (Question::Noul { .. }, PassFile::Answer(a)) => match a.as_str() {
+            "yes" => return Ok(vec!["true".into()]),
+            "no" => return Ok(vec!["false".into()]),
+            _ => bail!("noul takes \"yes\" or \"no\", got {a:?}"),
+        },
+        (Question::Noul { .. }, PassFile::Labels(_)) => {
+            bail!("noul takes \"yes\" or \"no\", not a list")
+        }
+        (q, PassFile::Answer(_)) => bail!("{} takes a list of criteria", q.kind()),
+        (_, PassFile::Labels(l)) => l,
+    };
+    if labels.is_empty() {
+        bail!("empty list");
+    }
+    for l in &labels {
+        let known = match question {
+            Question::Choice { criteria, .. } => criteria.contains_key(l),
+            Question::Score { criteria, .. } => criteria.contains(l),
+            Question::Noul { .. } => false,
+        };
+        if !known {
+            bail!("{l:?} is not in criteria");
+        }
+    }
+    Ok(labels)
 }
 
 fn version(model: &str, state: &str, question: &Question) -> Result<String> {
@@ -394,6 +442,50 @@ no = ""
             "name = \"answered\"\nmatch = { upstream = \"nope\" }\n",
         ));
         assert!(e.contains("match.upstream"), "{e}");
+    }
+
+    #[test]
+    fn pass_maps_to_stored_labels() {
+        let with = |pass: &str| {
+            parse(&CHOICE.replace(
+                "name = \"answered\"\n",
+                &format!("name = \"answered\"\npass = {pass}\n"),
+            ))
+        };
+        let c = with("[\"yes\"]").unwrap();
+        assert_eq!(c.evaluators[0].pass, Some(vec!["yes".to_owned()]));
+        assert_eq!(parse(CHOICE).unwrap().evaluators[0].pass, None);
+        assert_eq!(
+            c.evaluators[0].version,
+            parse(CHOICE).unwrap().evaluators[0].version
+        );
+
+        for (pass, msg) in [
+            ("[\"maybe\"]", r#""maybe" is not in criteria"#),
+            ("[]", "empty list"),
+            ("\"yes\"", "choice takes a list"),
+        ] {
+            let e = format!("{:#}", with(pass).unwrap_err());
+            assert!(e.contains(&format!("pass: {msg}")), "{pass}: {e}");
+        }
+
+        let noul = |pass: &str| {
+            parse(&format!(
+                "[[eval.evaluators]]\nname = \"n\"\nstate = \"x\"\npass = {pass}\nquestion = {{ type = \"noul\", instructions = \"i\" }}\n"
+            ))
+        };
+        assert_eq!(
+            noul("\"no\"").unwrap().evaluators[0].pass,
+            Some(vec!["false".to_owned()])
+        );
+        assert!(format!("{:#}", noul("\"true\"").unwrap_err()).contains("noul takes"));
+        assert!(format!("{:#}", noul("[\"yes\"]").unwrap_err()).contains("not a list"));
+
+        let score = parse(
+            "[[eval.evaluators]]\nname = \"s\"\nstate = \"x\"\npass = [\"good\"]\nquestion = { type = \"score\", instructions = \"i\", criteria = [\"bad\", \"good\"] }\n",
+        )
+        .unwrap();
+        assert_eq!(score.evaluators[0].pass, Some(vec!["good".to_owned()]));
     }
 
     #[test]

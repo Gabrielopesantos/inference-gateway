@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 
 /// Applied in order; entry `n` moves `user_version` from `n` to `n + 1`.
 /// Never edit a released entry: append a new one.
-const MIGRATIONS: &[&str] = &[V1, V2];
+const MIGRATIONS: &[&str] = &[V1, V2, V3];
 
 /// Times are unix milliseconds (INTEGER) and durations milliseconds (REAL).
 /// Ids and hashes are raw bytes: `hex(id)` in SQL for display.
@@ -136,6 +136,35 @@ CREATE INDEX scores_version ON scores (name, evaluator_version);
 /// The span's trace id when the client sent a `traceparent`; NULL means `id`.
 const V2: &str = "ALTER TABLE traces ADD COLUMN otel_trace_id BLOB;";
 
+/// The pass rule of each configured evaluator, kept after it leaves the
+/// config. `score_verdicts` applies it to every score of that name.
+const V3: &str = "
+CREATE TABLE evaluators (
+    name TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('noul', 'choice', 'score')),
+    -- JSON array of passing labels; NULL means no verdict.
+    pass TEXT,
+    min_confidence REAL,
+    updated_at INTEGER NOT NULL
+);
+
+-- label: value_label, or noul as 'true' / 'false'.
+-- verdict: NULL without a pass rule, else 'uncertain' below min_confidence,
+-- else 'pass' or 'fail'.
+CREATE VIEW score_verdicts AS
+SELECT s.*,
+       CASE
+           WHEN e.pass IS NULL THEN NULL
+           WHEN s.confidence < e.min_confidence THEN 'uncertain'
+           WHEN s.label IN (SELECT value FROM json_each(e.pass)) THEN 'pass'
+           ELSE 'fail'
+       END AS verdict
+FROM (SELECT *,
+             coalesce(value_label, CASE value_bool WHEN 1 THEN 'true' WHEN 0 THEN 'false' END) AS label
+        FROM scores) AS s
+LEFT JOIN evaluators e ON e.name = s.name;
+";
+
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The single write connection: creates the file and migrates it.
@@ -204,7 +233,7 @@ mod tests {
                 .map(|v| format!("{v:?}"))
                 .unwrap()
         };
-        assert_eq!(get("user_version"), "Integer(2)");
+        assert_eq!(get("user_version"), "Integer(3)");
         assert_eq!(get("journal_mode"), r#"Text("wal")"#);
         // 2 = incremental
         assert_eq!(get("auto_vacuum"), "Integer(2)");

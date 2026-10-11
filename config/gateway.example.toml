@@ -110,7 +110,11 @@ sample = 0.25         # deterministic per trace id
 # # such as Claude Code's session-title call.
 # match = { upstream = "anthropic", tags = { project = "gateway-dev" }, stop_reason = ["end_turn"], structured_output = false }
 # sample = 1.0
-# min_confidence = 0.7            # dashboards and SQL only
+# # Verdict in the score_verdicts view and dashboards; not part of the version,
+# # so edits apply to stored scores. pass: labels from criteria (choice, score)
+# # or "yes" / "no" (noul). No pass means no verdict.
+# pass = ["correct", "partial"]
+# min_confidence = 0.7            # below it the verdict is uncertain
 # # Variables: last_user_message, output_text, system, conversation,
 # # tool_calls, thinking, stop_reason.
 # state = """
