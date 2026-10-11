@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, ErrorCode, Transaction, params};
 use tokio::sync::{Notify, mpsc};
 use tracing::{debug, error, warn};
 
@@ -78,6 +78,11 @@ fn write_batch(conn: &mut Connection, batch: &[Arc<CompletedExchange>], jobs: &J
             error!(id = %batch[0].record.id, error = %format!("{e:#}"), "trace not stored");
             0
         }
+        // Each row would wait out the busy timeout again.
+        Err(e) if is_busy(&e) => {
+            error!(rows = batch.len(), error = %format!("{e:#}"), "store busy; batch not stored");
+            0
+        }
         Err(e) => {
             warn!(rows = batch.len(), error = %format!("{e:#}"), "store batch failed; retrying one by one");
             batch
@@ -98,6 +103,12 @@ fn write_batch(conn: &mut Connection, batch: &[Arc<CompletedExchange>], jobs: &J
     {
         n.notify_one();
     }
+}
+
+fn is_busy(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<rusqlite::Error>()
+        .and_then(rusqlite::Error::sqlite_error_code)
+        .is_some_and(|c| matches!(c, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked))
 }
 
 /// Returns the number of eval jobs enqueued.
