@@ -18,13 +18,13 @@ use support::mock_upstream::{MockUpstream, Script};
 use support::{Options, TestGateway, client, config, spawn_gateway_with};
 
 const TEXT_SSE: &[u8] = include_bytes!("fixtures/anthropic/text.sse");
-const CHOICE: &[u8] = include_bytes!("fixtures/jev/choice.json");
-const NOUL: &[u8] = include_bytes!("fixtures/jev/noul.json");
-const SCORE: &[u8] = include_bytes!("fixtures/jev/score.json");
-const ERROR_401: &[u8] = include_bytes!("fixtures/jev/error_401.json");
-const ERROR_422: &[u8] = include_bytes!("fixtures/jev/error_422.json");
+const CHOICE: &[u8] = include_bytes!("fixtures/judge/choice.json");
+const NOUL: &[u8] = include_bytes!("fixtures/judge/noul.json");
+const SCORE: &[u8] = include_bytes!("fixtures/judge/score.json");
+const ERROR_401: &[u8] = include_bytes!("fixtures/judge/error_401.json");
+const ERROR_422: &[u8] = include_bytes!("fixtures/judge/error_422.json");
 const MESSAGES: &str = r#"{"model":"claude-sonnet-5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi there"}]}"#;
-const KEY: &str = "jev-test-key";
+const KEY: &str = "judge-test-key";
 const GRACE: Duration = Duration::from_secs(5);
 
 const CHOICE_Q: &str = r#"
@@ -55,7 +55,7 @@ const STATE: &str = "<user>{{ last_user_message }}</user><response>{{ output_tex
 
 /// The `[eval]` and `[[eval.evaluators]]` sections; the evaluator is named
 /// `q`, as in the fixtures.
-fn eval_section(jev: &str, eval: &str, state: &str, question: &str) -> String {
+fn eval_section(judge: &str, eval: &str, state: &str, question: &str) -> String {
     format!(
         r#"
 [eval]
@@ -63,7 +63,7 @@ poll = "50ms"
 {eval}
 
 [eval.judge]
-base_url = "{jev}"
+base_url = "{judge}"
 model = "jev-1.13.0"
 api_key_env = "IG_TEST_UNUSED"
 
@@ -128,27 +128,27 @@ fn count(conn: &Connection, sql: &str) -> i64 {
     conn.query_row(sql, [], |r| r.get(0)).unwrap()
 }
 
-/// One request scored end to end; returns the db dir and the Jev mock.
-async fn scored(jev_answer: &[u8], question: &str) -> (tempfile::TempDir, MockUpstream) {
+/// One request scored end to end; returns the db dir and the judge mock.
+async fn scored(judge_answer: &[u8], question: &str) -> (tempfile::TempDir, MockUpstream) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, jev_answer)).await;
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, judge_answer)).await;
     let gw = gateway(
         &db,
         &upstream,
-        &eval_section(&jev.base_url(), "", STATE, question),
+        &eval_section(&judge.base_url(), "", STATE, question),
     )
     .await;
     post(&gw).await;
     let _: i64 = wait_row(&db, "SELECT id FROM scores").await;
     gw.shutdown(GRACE).await.unwrap();
-    (dir, jev)
+    (dir, judge)
 }
 
 #[tokio::test]
 async fn choice_answer_becomes_a_score_row() {
-    let (dir, jev) = scored(CHOICE, CHOICE_Q).await;
+    let (dir, judge) = scored(CHOICE, CHOICE_Q).await;
     let conn = reader(&dir.path().join("g.db"));
     let row = conn
         .query_row(
@@ -200,7 +200,7 @@ async fn choice_answer_becomes_a_score_row() {
     assert!(!row.14);
     assert_eq!((row.15.as_str(), row.16), ("done", 1));
 
-    let req = jev.last_request();
+    let req = judge.last_request();
     assert_eq!(req.uri.path(), "/v1/systemone");
     assert_eq!(req.headers["authorization"], format!("Bearer {KEY}"));
     let body: Value = serde_json::from_slice(&req.body).unwrap();
@@ -215,7 +215,7 @@ async fn choice_answer_becomes_a_score_row() {
 
 #[tokio::test]
 async fn noul_answer_sets_bool_and_probability() {
-    let (dir, _jev) = scored(NOUL, NOUL_Q).await;
+    let (dir, _judge) = scored(NOUL, NOUL_Q).await;
     let conn = reader(&dir.path().join("g.db"));
     let (data_type, b, label, num, confidence): (
         String,
@@ -238,7 +238,7 @@ async fn noul_answer_sets_bool_and_probability() {
 
 #[tokio::test]
 async fn score_answer_sets_value_and_label() {
-    let (dir, _jev) = scored(SCORE, SCORE_Q).await;
+    let (dir, _judge) = scored(SCORE, SCORE_Q).await;
     let conn = reader(&dir.path().join("g.db"));
     let (data_type, label, num, confidence): (String, Option<String>, Option<f64>, Option<f64>) =
         conn.query_row(
@@ -253,15 +253,15 @@ async fn score_answer_sets_value_and_label() {
     );
 }
 
-/// Runs one request against a Jev mock and waits for the job to fail.
-async fn failed_job(jev: &MockUpstream, eval: &str) -> (tempfile::TempDir, i64, String) {
+/// Runs one request against a judge mock and waits for the job to fail.
+async fn failed_job(judge: &MockUpstream, eval: &str) -> (tempfile::TempDir, i64, String) {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
     let gw = gateway(
         &db,
         &upstream,
-        &eval_section(&jev.base_url(), eval, STATE, CHOICE_Q),
+        &eval_section(&judge.base_url(), eval, STATE, CHOICE_Q),
     )
     .await;
     post(&gw).await;
@@ -287,11 +287,11 @@ async fn config_errors_fail_on_the_first_attempt() {
             "Field required",
         ),
     ] {
-        let jev = MockUpstream::start(Script::json(status, body)).await;
-        let (dir, attempts, error) = failed_job(&jev, "").await;
+        let judge = MockUpstream::start(Script::json(status, body)).await;
+        let (dir, attempts, error) = failed_job(&judge, "").await;
         assert_eq!(attempts, 1, "{status}");
         assert!(error.contains(needle), "{status}: {error}");
-        assert_eq!(jev.requests().len(), 1);
+        assert_eq!(judge.requests().len(), 1);
         assert_eq!(
             count(
                 &reader(&dir.path().join("g.db")),
@@ -307,11 +307,11 @@ async fn invalid_answer_is_retried_then_failed() {
     let bad = String::from_utf8(CHOICE.to_vec())
         .unwrap()
         .replace("\"choice\":\"correct\"", "\"choice\":\"maybe\"");
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, bad.as_bytes())).await;
-    let (_dir, attempts, error) = failed_job(&jev, "max_attempts = 2").await;
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, bad.as_bytes())).await;
+    let (_dir, attempts, error) = failed_job(&judge, "max_attempts = 2").await;
     assert_eq!(attempts, 2);
     assert!(error.contains("not in criteria"), "{error}");
-    assert_eq!(jev.requests().len(), 2);
+    assert_eq!(judge.requests().len(), 2);
 }
 
 #[tokio::test]
@@ -320,14 +320,14 @@ async fn rate_limit_honors_retry_after() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("g.db");
         let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
-        let jev = MockUpstream::start(
+        let judge = MockUpstream::start(
             Script::json(StatusCode::TOO_MANY_REQUESTS, b"{}").with_header(header.0, header.1),
         )
         .await;
         let gw = gateway(
             &db,
             &upstream,
-            &eval_section(&jev.base_url(), "", STATE, CHOICE_Q),
+            &eval_section(&judge.base_url(), "", STATE, CHOICE_Q),
         )
         .await;
         let before = unix_ms(SystemTime::now());
@@ -342,26 +342,27 @@ async fn rate_limit_honors_retry_after() {
         // Backoff alone would be at most 1 s after the attempt.
         assert!(not_before >= before + 2000, "{header:?}");
         assert!(not_before <= after + 2000, "{header:?}");
-        assert_eq!(jev.requests().len(), 1);
+        assert_eq!(judge.requests().len(), 1);
     }
 }
 
 #[tokio::test]
 async fn over_budget_state_is_truncated() {
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
-    let section = eval_section(&jev.base_url(), "", "<r>{{ output_text }}</r>", CHOICE_Q).replace(
-        "model = \"jev-1.13.0\"",
-        "model = \"jev-1.13.0\"\nmax_state_tokens = 60",
-    );
+    let section = eval_section(&judge.base_url(), "", "<r>{{ output_text }}</r>", CHOICE_Q)
+        .replace(
+            "model = \"jev-1.13.0\"",
+            "model = \"jev-1.13.0\"\nmax_state_tokens = 60",
+        );
     let gw = gateway(&db, &upstream, &section).await;
     post(&gw).await;
     let truncated: bool = wait_row(&db, "SELECT input_truncated FROM scores").await;
     gw.shutdown(GRACE).await.unwrap();
     assert!(truncated);
-    let body: Value = serde_json::from_slice(&jev.last_request().body).unwrap();
+    let body: Value = serde_json::from_slice(&judge.last_request().body).unwrap();
     let state = body["state"].as_str().unwrap();
     assert!(state.starts_with("<r>Hell\n"), "{state}");
     assert!(state.ends_with("\nday?</r>"), "{state}");
@@ -394,11 +395,11 @@ async fn shutdown_releases_in_flight_jobs_and_restart_scores_them() {
         .unwrap();
     assert_eq!((status.as_str(), attempts), ("pending", 0));
 
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
     let gw = gateway(
         &db,
         &upstream,
-        &eval_section(&jev.base_url(), "", STATE, CHOICE_Q),
+        &eval_section(&judge.base_url(), "", STATE, CHOICE_Q),
     )
     .await;
     let _: i64 = wait_row(&db, "SELECT id FROM scores").await;
@@ -412,14 +413,14 @@ async fn new_version_backfills_and_both_versions_are_kept() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
-    let v1 = eval_section(&jev.base_url(), "", STATE, CHOICE_Q);
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, CHOICE)).await;
+    let v1 = eval_section(&judge.base_url(), "", STATE, CHOICE_Q);
     let gw = gateway(&db, &upstream, &v1).await;
     post(&gw).await;
     let _: i64 = wait_row(&db, "SELECT id FROM scores").await;
     gw.shutdown(GRACE).await.unwrap();
 
-    let v2 = eval_section(&jev.base_url(), "", "{{ output_text }}", CHOICE_Q);
+    let v2 = eval_section(&judge.base_url(), "", "{{ output_text }}", CHOICE_Q);
     let cfg = Config::parse(&config(
         &[("anthropic", "anthropic", &upstream.base_url())],
         &format!("[store]\npath = \"{}\"\n\n{v2}", db.display()),
@@ -473,12 +474,12 @@ async fn scores_and_failures_are_metered() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TEXT_SSE, Duration::ZERO)).await;
-    let jev = MockUpstream::start_seq(vec![
+    let judge = MockUpstream::start_seq(vec![
         Script::json(StatusCode::SERVICE_UNAVAILABLE, b"{}"),
         Script::json(StatusCode::OK, CHOICE),
     ])
     .await;
-    let eval = eval_section(&jev.base_url(), "", STATE, CHOICE_Q);
+    let eval = eval_section(&judge.base_url(), "", STATE, CHOICE_Q);
     let gw = gateway(&db, &upstream, &format!("[prometheus]\n{eval}")).await;
     post(&gw).await;
     let _: i64 = wait_row(&db, "SELECT id FROM scores").await;
@@ -498,10 +499,10 @@ async fn scores_and_failures_are_metered() {
 /// Against the real API; the upstream stays a mock, so only the judge key
 /// is needed:
 ///
-///     cargo test --test eval_judge -- --ignored real_jev --nocapture
+///     cargo test --test eval_judge -- --ignored real_judge --nocapture
 #[tokio::test]
-#[ignore = "calls the real Jev API; needs IG_JUDGE_API_KEY"]
-async fn real_jev_scores_a_trace() {
+#[ignore = "calls the real judge API; needs IG_JUDGE_API_KEY"]
+async fn real_judge_scores_a_trace() {
     let Some(key) = std::env::var("IG_JUDGE_API_KEY")
         .ok()
         .filter(|k| !k.is_empty())
@@ -601,9 +602,9 @@ async fn tool_turn_state_shows_the_tool_calls() {
     let dir = tempfile::tempdir().unwrap();
     let db = dir.path().join("g.db");
     let upstream = MockUpstream::start(Script::sse(TOOL_USE_SSE, Duration::ZERO)).await;
-    let jev = MockUpstream::start(Script::json(StatusCode::OK, NOUL)).await;
+    let judge = MockUpstream::start(Script::json(StatusCode::OK, NOUL)).await;
     let section = eval_section(
-        &jev.base_url(),
+        &judge.base_url(),
         "",
         "<stop>{{ stop_reason }}</stop><calls>{{ tool_calls }}</calls>",
         NOUL_Q,
@@ -623,7 +624,7 @@ async fn tool_turn_state_shows_the_tool_calls() {
         .nth(1)
         .and_then(|s| s.split('"').next())
         .unwrap();
-    let body: Value = serde_json::from_slice(&jev.last_request().body).unwrap();
+    let body: Value = serde_json::from_slice(&judge.last_request().body).unwrap();
     let state = body["state"].as_str().unwrap();
     assert!(state.starts_with("<stop>tool_use</stop><calls>"), "{state}");
     assert!(state.contains(&format!("<calls>{name} {{")), "{state}");
@@ -654,11 +655,11 @@ unclear = "Not enough context to tell"
 /// Negative control: `next_step` scored every real Claude Code tool turn
 /// `good`; these calls are bad on purpose and must not be.
 ///
-///     cargo test --test eval_judge -- --ignored real_jev --nocapture
+///     cargo test --test eval_judge -- --ignored real_judge --nocapture
 #[tokio::test]
-#[ignore = "calls the real Jev API; needs IG_JUDGE_API_KEY"]
-async fn real_jev_next_step_flags_bad_calls() {
-    use inference_gateway::eval::jev::Judge;
+#[ignore = "calls the real judge API; needs IG_JUDGE_API_KEY"]
+async fn real_judge_next_step_flags_bad_calls() {
+    use inference_gateway::eval::judge::Judge;
     use inference_gateway::eval::template::{self, Vars};
 
     let Some(key) = std::env::var("IG_JUDGE_API_KEY")

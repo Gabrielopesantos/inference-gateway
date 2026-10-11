@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 
-use super::jev::Decision;
+use super::judge::Decision;
 use crate::modules::BuildCtx;
 
 #[derive(Clone, Default)]

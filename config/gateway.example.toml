@@ -84,9 +84,10 @@ allow_header_override = true
 match = { model = "claude-haiku-*" }
 sample = 0.25         # deterministic per trace id
 
-# Scores captured traces with the Jev decision model, asynchronously. Needs
-# [store]; only captured traces with outcome ok are enqueued. Workers also run
-# standalone: `inference-gateway eval run --config <file>` on the same database.
+# Scores captured traces with a System One judge model (tested: Typesafe Jev),
+# asynchronously. Needs [store]; only captured traces with outcome ok are
+# enqueued. Workers also run standalone:
+# `inference-gateway eval run --config <file>` on the same database.
 # [eval]
 # concurrency = 4       # jobs in flight = concurrent judge calls
 # max_attempts = 5      # 408/429/5xx/timeouts/invalid answers are retried
@@ -97,7 +98,7 @@ sample = 0.25         # deterministic per trace id
 # base_url = "https://api.typesafe.ai"
 # model = "jev-1.13.0"            # pin: jev-latest moves between releases
 # api_key_env = "IG_JUDGE_API_KEY"
-# max_state_tokens = 32000        # Jev limit for state plus question
+# max_state_tokens = 32000        # judge limit for state plus question
 #
 # One question per evaluator. Editing the model, state or question makes a new
 # evaluator version; `inference-gateway eval backfill --evaluator NAME` scores

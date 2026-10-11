@@ -128,7 +128,7 @@ fn default_poll() -> Duration {
     Duration::from_secs(1)
 }
 
-/// Jev limit: state plus the longest question.
+/// Typesafe Jev's limit: state plus the longest question.
 fn default_max_state_tokens() -> usize {
     32_000
 }
@@ -137,7 +137,7 @@ fn default_timeout() -> Duration {
     Duration::from_mins(1)
 }
 
-/// Jev list price; output tokens are not billed.
+/// Typesafe Jev's list price; output tokens are not billed.
 fn default_usd_per_mtok_input() -> f64 {
     0.042
 }

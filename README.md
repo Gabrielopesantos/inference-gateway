@@ -6,7 +6,8 @@ traffic unchanged and observes every exchange:
 - tokens, cost, TTFB, TTFT, decode throughput, errors and rate-limit headroom as Prometheus metrics
 - one OpenTelemetry span per request, with `gen_ai.*` attributes
 - every request as a row in SQLite, and prompt/response content when a capture rule matches
-- asynchronous quality scores for captured responses from the [Jev](https://docs.typesafe.ai) decision model
+- asynchronous quality scores for captured responses from a System One judge model (tested:
+  [Typesafe Jev](https://docs.typesafe.ai))
 
 Grafana shows all of it; there is no custom UI.
 
@@ -46,7 +47,7 @@ client ──► ingress ──► proxy ──► upstream
        ┌─────────┬───────┴────┬──────────┐
    access log  prometheus   store      otel        one bounded queue each
                               │
-                          eval jobs ──► Jev ──► scores
+                          eval jobs ──► judge ──► scores
 ```
 
 - The proxy forwards the request and streams the response back. It never waits on anything below it.

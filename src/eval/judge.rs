@@ -1,5 +1,5 @@
-//! Jev decision model client: one question per call, typed answer back.
-//! Wire format: <https://docs.typesafe.ai/api>.
+//! System One judge client: one question per call, typed answer back.
+//! Wire format: Typesafe Jev, <https://docs.typesafe.ai/api>.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -38,7 +38,7 @@ impl fmt::Debug for Judge {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Decision {
     pub verdict: Verdict,
-    /// `None` for noul: Jev returns none.
+    /// `None` for noul: the judge returns none.
     pub confidence: Option<f64>,
     pub distribution: BTreeMap<String, f64>,
     /// The version that answered, e.g. `jev-1.13.0` for `jev-latest`.
@@ -395,7 +395,7 @@ mod tests {
 
     fn fixture(name: &str) -> Value {
         let path = format!(
-            "{}/tests/fixtures/jev/{name}.json",
+            "{}/tests/fixtures/judge/{name}.json",
             env!("CARGO_MANIFEST_DIR")
         );
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()

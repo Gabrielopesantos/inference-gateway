@@ -13,7 +13,7 @@ use tokio::time::Instant;
 use tracing::{debug, error, warn};
 use uuid::Uuid;
 
-use super::jev::{Decision, Judge};
+use super::judge::{Decision, Judge};
 use super::metrics::Metrics;
 use super::queue::{self, Job, Score};
 use super::template::{self, Vars};

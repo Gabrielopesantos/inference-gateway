@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Record Jev responses as tests/fixtures/jev/<name>.{json,headers}.
+# Record System One judge responses (Typesafe Jev API) as
+# tests/fixtures/judge/<name>.{json,headers}.
 #
-#     IG_JUDGE_API_KEY=... scripts/record_jev_fixtures.sh
+#     IG_JUDGE_API_KEY=... scripts/record_judge_fixtures.sh
 #
 # The questions equal the ones in tests/eval_judge.rs, with question id `q`.
 # The state is synthetic. Credentials and cookies are dropped from headers.
 set -euo pipefail
 
 : "${IG_JUDGE_API_KEY:?set IG_JUDGE_API_KEY}"
-URL="${JEV_BASE_URL:-https://api.typesafe.ai}/v1/systemone"
-MODEL="${JEV_MODEL:-jev-1.13.0}"
-OUT="$(dirname "$0")/../tests/fixtures/jev"
+URL="${IG_JUDGE_BASE_URL:-https://api.typesafe.ai}/v1/systemone"
+MODEL="${IG_JUDGE_MODEL:-jev-1.13.0}"
+OUT="$(dirname "$0")/../tests/fixtures/judge"
 STATE='<user>hi there</user><response>Hello! How can I help you today?</response>'
 DROP='^(authorization|x-api-key|set-cookie|cookie|cf-|strict-transport-security|alt-svc|server|via|x-envoy|date|content-encoding|content-length|transfer-encoding)'
 

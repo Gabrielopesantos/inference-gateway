@@ -20,7 +20,7 @@ use support::mock_upstream::{MockUpstream, Script};
 use support::{Options, TestGateway, config, spawn_gateway_with};
 
 const TEXT_SSE: &[u8] = include_bytes!("fixtures/anthropic/text.sse");
-const CHOICE: &[u8] = include_bytes!("fixtures/jev/choice.json");
+const CHOICE: &[u8] = include_bytes!("fixtures/judge/choice.json");
 const MESSAGES: &str = r#"{"model":"claude-sonnet-5","max_tokens":64,"stream":true,"messages":[{"role":"user","content":"hi there"}]}"#;
 const CONNECTIONS: usize = 200;
 const REQUESTS: usize = 4000;
@@ -142,7 +142,7 @@ async fn measure(eval: bool) -> (Stats, u64, u64) {
     let up = upstream().await;
     let mut slow = Script::json(StatusCode::OK, CHOICE);
     slow.header_delay = Duration::from_millis(200);
-    let jev = MockUpstream::start(slow).await;
+    let judge = MockUpstream::start(slow).await;
     let section = format!(
         r#"
 [eval]
@@ -163,7 +163,7 @@ type = "choice"
 instructions = "Did the response address the request?"
 criteria = {{ correct = "Fully answers", partial = "Answers part", wrong = "" }}
 "#,
-        jev.base_url()
+        judge.base_url()
     );
     let gw = gateway(&db, &up, if eval { &section } else { "" }).await;
     oha(&gw, WARMUP).await;

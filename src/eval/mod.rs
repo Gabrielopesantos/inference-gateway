@@ -1,9 +1,9 @@
-//! Asynchronous scoring of captured traces by the Jev judge. The store
+//! Asynchronous scoring of captured traces by a System One judge. The store
 //! writer enqueues jobs with the trace; a worker drains the queue, here or
 //! in `inference-gateway eval run` against the same database.
 
 pub mod backfill;
-pub mod jev;
+pub mod judge;
 pub mod metrics;
 pub mod queue;
 pub mod template;
@@ -17,7 +17,7 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 use tracing::error;
 
-use self::jev::Judge;
+use self::judge::Judge;
 use self::metrics::Metrics;
 use self::worker::Worker;
 use crate::config::eval::{EvalConfig, Judge as JudgeConfig};
