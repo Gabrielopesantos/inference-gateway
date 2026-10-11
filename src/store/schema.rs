@@ -8,7 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 
 /// Applied in order; entry `n` moves `user_version` from `n` to `n + 1`.
 /// Never edit a released entry: append a new one.
-const MIGRATIONS: &[&str] = &[V1, V2, V3];
+const MIGRATIONS: &[&str] = &[V1];
 
 /// Times are unix milliseconds (INTEGER) and durations milliseconds (REAL).
 /// Ids and hashes are raw bytes: `hex(id)` in SQL for display.
@@ -53,7 +53,9 @@ CREATE TABLE traces (
     window_5h_utilization REAL,
     window_7d_utilization REAL,
     cost_usd REAL,
-    captured INTEGER NOT NULL
+    captured INTEGER NOT NULL,
+    -- The span's trace id when the client sent a `traceparent`; NULL means `id`.
+    otel_trace_id BLOB
 );
 CREATE INDEX traces_started_at ON traces (started_at);
 CREATE INDEX traces_session_id ON traces (session_id);
@@ -131,14 +133,9 @@ CREATE TABLE scores (
 );
 CREATE INDEX scores_trace ON scores (trace_id);
 CREATE INDEX scores_version ON scores (name, evaluator_version);
-";
 
-/// The span's trace id when the client sent a `traceparent`; NULL means `id`.
-const V2: &str = "ALTER TABLE traces ADD COLUMN otel_trace_id BLOB;";
-
-/// The pass rule of each configured evaluator, kept after it leaves the
-/// config. `score_verdicts` applies it to every score of that name.
-const V3: &str = "
+-- The pass rule of each configured evaluator, kept after it leaves the
+-- config. score_verdicts applies it to every score of that name.
 CREATE TABLE evaluators (
     name TEXT PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('noul', 'choice', 'score')),
@@ -233,7 +230,7 @@ mod tests {
                 .map(|v| format!("{v:?}"))
                 .unwrap()
         };
-        assert_eq!(get("user_version"), "Integer(3)");
+        assert_eq!(get("user_version"), "Integer(1)");
         assert_eq!(get("journal_mode"), r#"Text("wal")"#);
         // 2 = incremental
         assert_eq!(get("auto_vacuum"), "Integer(2)");
