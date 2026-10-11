@@ -1,0 +1,13 @@
+target/
+.direnv/
+.git/
+result
+plan/
+recorded/
+.env
+**/.env
+*.db
+*.db-wal
+*.db-shm
+config/*.local.toml
+config/pricing-cache.json

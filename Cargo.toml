@@ -2,7 +2,11 @@
 name = "inference-gateway"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 description = "Transparent streaming gateway for LLM APIs that observes every exchange."
+license = "MIT"
+repository = "https://github.com/Gabrielopesantos/inference-gateway"
+publish = false
 
 [[bin]]
 name = "inference-gateway"

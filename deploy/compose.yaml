@@ -1,9 +1,9 @@
 # Gateway plus Grafana, Prometheus and Tempo (grafana/otel-lgtm).
-#   nix build .#image && docker load < result
-#   docker compose -f deploy/compose.yaml up -d
+#   docker compose -f deploy/compose.yaml up -d --build
 services:
   gateway:
     image: inference-gateway:dev
+    build: ..
     restart: unless-stopped
     env_file:
       # IG_IDENTITY_SECRET, IG_JUDGE_API_KEY, IG_GATEWAY_TOKEN
